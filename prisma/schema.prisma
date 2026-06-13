@@ -1,0 +1,175 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  leagues   League[]
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+model League {
+  id                 String          @id @default(cuid())
+  userId             String          @map("user_id")
+  user               User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name               String
+  platform           String          @default("manual") // manual, sleeper, yahoo, fleaflicker, espn_experimental
+  externalLeagueId   String?         @map("external_league_id")
+  scoringType        String          @map("scoring_type") // standard, half_ppr, ppr
+  teamCount          Int             @map("team_count")
+  draftType          String          @map("draft_type") // snake, linear
+  rosterSettingsJson Json            @map("roster_settings_json")
+  teams              Team[]
+  drafts             Draft[]
+  rankings           PlayerRanking[]
+  rosters            Roster[]
+  createdAt          DateTime        @default(now()) @map("created_at")
+  updatedAt          DateTime        @updatedAt @map("updated_at")
+
+  @@map("leagues")
+}
+
+model Team {
+  id            String      @id @default(cuid())
+  leagueId      String      @map("league_id")
+  league        League      @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  name          String
+  ownerName     String?     @map("owner_name")
+  draftPosition Int         @map("draft_position")
+  isUserTeam    Boolean     @default(false) @map("is_user_team")
+  externalTeamId String?    @map("external_team_id")
+  draftPicks    DraftPick[]
+  rosterItems   Roster[]
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  @@map("teams")
+}
+
+model Draft {
+  id                 String           @id @default(cuid())
+  leagueId           String           @map("league_id")
+  league             League           @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  status             String           @default("setup") // setup, active, paused, completed
+  currentPickNumber  Int              @default(1) @map("current_pick_number")
+  totalRounds        Int              @map("total_rounds")
+  draftType          String           @map("draft_type") // snake, linear
+  picks              DraftPick[]
+  recommendations    Recommendation[]
+  startedAt          DateTime?        @map("started_at")
+  completedAt        DateTime?        @map("completed_at")
+  createdAt          DateTime         @default(now()) @map("created_at")
+  updatedAt          DateTime         @updatedAt @map("updated_at")
+
+  @@map("drafts")
+}
+
+model DraftPick {
+  id          String    @id @default(cuid())
+  draftId     String    @map("draft_id")
+  draft       Draft     @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  pickNumber  Int       @map("pick_number")
+  roundNumber Int       @map("round_number")
+  teamId      String    @map("team_id")
+  team        Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  playerId    String    @map("player_id")
+  player      Player    @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  source      String    @default("manual") // manual, sleeper, yahoo, fleaflicker, import
+  pickedAt    DateTime  @default(now()) @map("picked_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@map("draft_picks")
+}
+
+model Player {
+  id           String          @id @default(cuid())
+  name         String
+  position     String // QB, RB, WR, TE, K, DEF, etc.
+  nflTeam      String          @map("nfl_team")
+  byeWeek      Int             @map("bye_week")
+  injuryStatus String?         @map("injury_status")
+  rankings     PlayerRanking[]
+  draftPicks   DraftPick[]
+  rosters      Roster[]
+  recs         Recommendation[]
+  createdAt    DateTime        @default(now()) @map("created_at")
+  updatedAt    DateTime        @updatedAt @map("updated_at")
+
+  @@index([name])
+  @@index([position])
+  @@map("players")
+}
+
+model PlayerRanking {
+  id                String   @id @default(cuid())
+  playerId          String   @map("player_id")
+  player            Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  leagueId          String   @map("league_id")
+  league            League   @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  source            String   @default("import") // import, default
+  overallRank       Int      @map("overall_rank")
+  positionRank      Int      @map("position_rank")
+  projectedPoints   Float    @map("projected_points")
+  adp               Float
+  tier              Int
+  riskScore         Float    @map("risk_score")
+  ceilingProjection Float?   @map("ceiling_projection")
+  floorProjection   Float?   @map("floor_projection")
+  notes             String?
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@map("player_rankings")
+}
+
+model Roster {
+  id             String   @id @default(cuid())
+  leagueId       String   @map("league_id")
+  league         League   @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  teamId         String   @map("team_id")
+  team           Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  playerId       String   @map("player_id")
+  player         Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  rosterPosition String   @map("roster_position") // QB, RB, WR, TE, FLEX, SUPERFLEX, K, DST, BN
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([teamId])
+  @@map("rosters")
+}
+
+model Recommendation {
+  id                     String   @id @default(cuid())
+  draftId                String   @map("draft_id")
+  draft                  Draft    @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  teamId                 String   @map("team_id")
+  pickNumber             Int      @map("pick_number")
+  playerId               String   @map("player_id")
+  player                 Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  recommendationRank     Int      @map("recommendation_rank")
+  totalScore             Float    @map("total_score")
+  projectedValueScore    Float    @map("projected_value_score")
+  positionalNeedScore    Float    @map("positional_need_score")
+  scarcityScore          Float    @map("scarcity_score")
+  adpValueScore          Float    @map("adp_value_score")
+  opponentPressureScore  Float    @map("opponent_pressure_score")
+  byeWeekScore           Float    @map("bye_week_score")
+  riskScore              Float    @map("risk_score")
+  survivalProbability    Float    @map("survival_probability")
+  explanation            String
+  createdAt              DateTime @default(now()) @map("created_at")
+
+  @@index([draftId])
+  @@map("recommendations")
+}

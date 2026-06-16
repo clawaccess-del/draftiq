@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Trophy, Plus, Settings, Play, CheckCircle2, AlertTriangle, LogOut } from "lucide-react";
 import SignOutButton from "@/components/SignOutButton";
+import SleeperImporter from "./SleeperImporter";
 
 export default async function DashboardPage() {
   const session = await getServerSession(authOptions);
@@ -132,11 +133,12 @@ export default async function DashboardPage() {
           </Link>
         </div>
 
-        {/* Leagues List Grid */}
-        <div className="space-y-4">
-          <h3 className="text-lg font-bold text-slate-200 tracking-tight">Active Leagues</h3>
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          {/* Leagues List Grid */}
+          <div className="lg:col-span-8 space-y-4">
+            <h3 className="text-lg font-bold text-slate-200 tracking-tight">Active Leagues</h3>
 
-          {leagues.length === 0 ? (
+            {leagues.length === 0 ? (
             <div className="text-center py-16 bg-slate-900/20 border border-dashed border-slate-800 rounded-3xl space-y-4">
               <Trophy className="h-12 w-12 text-slate-700 mx-auto" />
               <div className="space-y-1">
@@ -245,6 +247,12 @@ export default async function DashboardPage() {
               })}
             </div>
           )}
+          </div>
+
+          {/* Sleeper Sidebar */}
+          <div className="lg:col-span-4">
+            <SleeperImporter />
+          </div>
         </div>
       </main>
     </div>

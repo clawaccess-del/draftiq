@@ -106,9 +106,10 @@ export class SleeperAdapter implements FantasyPlatformAdapter {
     return picks.map((p: any) => ({
       pickNumber: p.pick_no,
       roundNumber: p.round,
-      teamId: p.owner_id,
+      teamId: p.owner_id || `roster-${p.roster_id}`,
       playerId: p.player_id,
       metadata: p.metadata,
+      rosterId: p.roster_id,
     }));
   }
 

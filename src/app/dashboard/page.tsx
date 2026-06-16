@@ -42,43 +42,7 @@ export default async function DashboardPage() {
   } catch (error) {
     console.error("Database connection error in dashboard:", error);
     dbConnected = false;
-    // Fallback mock data for offline testing
-    leagues = [
-      {
-        id: "mock-league-1",
-        name: "Apex Predator Dynasty",
-        platform: "manual",
-        scoringType: "ppr",
-        teamCount: 12,
-        draftType: "snake",
-        createdAt: new Date("2026-06-01"),
-        drafts: [
-          {
-            id: "mock-draft-1",
-            status: "active",
-            currentPickNumber: 42,
-            totalRounds: 15,
-          },
-        ],
-      },
-      {
-        id: "mock-league-2",
-        name: "Sleeper Mega League",
-        platform: "sleeper",
-        scoringType: "half_ppr",
-        teamCount: 10,
-        draftType: "snake",
-        createdAt: new Date("2026-05-15"),
-        drafts: [
-          {
-            id: "mock-draft-2",
-            status: "completed",
-            currentPickNumber: 150,
-            totalRounds: 15,
-          },
-        ],
-      },
-    ];
+    leagues = [];
   }
 
   return (

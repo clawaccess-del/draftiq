@@ -191,9 +191,16 @@ export default function DraftRoomPage({ params }: PageProps) {
             if (newPicks.length !== oldPicksLength) {
               draft.picks = newPicks.map((p: any) => {
                 let teamId = p.teamId;
-                const matchedTeam = matchedLeague.teams.find(
-                  (t: any) => t.id === p.teamId || t.draftPosition === p.pickNumber % matchedLeague.teamCount || (p.pickNumber % matchedLeague.teamCount === 0 && t.draftPosition === matchedLeague.teamCount)
-                );
+                const matchedTeam = matchedLeague.teams.find((t: any) => {
+                  if (t.id === p.teamId || (t.externalTeamId && t.externalTeamId === p.teamId)) {
+                    return true;
+                  }
+                  if (p.rosterId && t.draftPosition === p.rosterId) {
+                    return true;
+                  }
+                  const slot = p.pickNumber % matchedLeague.teamCount || matchedLeague.teamCount;
+                  return t.draftPosition === slot;
+                });
                 if (matchedTeam) teamId = matchedTeam.id;
 
                 return {

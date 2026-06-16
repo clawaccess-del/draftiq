@@ -14,29 +14,14 @@ export async function POST(req: NextRequest) {
 
   try {
     const { draftId, sleeperDraftId } = await req.json();
-    if (!sleeperDraftId) {
-      return NextResponse.json({ error: "Sleeper Draft ID is required" }, { status: 400 });
-    }
 
     const adapter = new SleeperAdapter();
-    const sleeperPicks = await adapter.getDraftPicks(sleeperDraftId);
-    
-    // Fetch draft status from Sleeper
-    let draftStatus = "active";
-    try {
-      const draftDetails = await adapter.getDraftDetails(sleeperDraftId);
-      if (draftDetails.status === "complete") {
-        draftStatus = "completed";
-      } else if (draftDetails.status === "paused") {
-        draftStatus = "paused";
-      }
-    } catch (e) {
-      console.warn("Failed to fetch draft details status from Sleeper, defaulting to active", e);
-    }
+    let resolvedSleeperDraftId = sleeperDraftId || draftId;
+    let dbDraft: any = null;
+    let dbConnected = true;
 
     try {
-      // 1. Online Database Logic
-      const draft = await prisma.draft.findUnique({
+      dbDraft = await prisma.draft.findUnique({
         where: { id: draftId },
         include: {
           picks: true,
@@ -52,16 +37,61 @@ export async function POST(req: NextRequest) {
           },
         },
       });
+    } catch (e) {
+      console.warn("DB connection failed in sync lookup, falling back to offline", e);
+      dbConnected = false;
+    }
 
-      if (!draft) {
-        return NextResponse.json({ error: "Draft not found in database" }, { status: 404 });
+    // Resolve sleeperDraftId using DB metadata if we are online
+    if (dbConnected && dbDraft && dbDraft.league.platform === "sleeper") {
+      const extId = dbDraft.league.externalLeagueId || "";
+      if (extId.startsWith("mock-")) {
+        resolvedSleeperDraftId = extId.replace("mock-", "");
+      } else if (extId) {
+        // It's a Sleeper league. Fetch its drafts list to find the active draft ID
+        try {
+          const draftsList = await adapter.getDrafts(extId);
+          if (draftsList && draftsList[0]) {
+            resolvedSleeperDraftId = draftsList[0].draft_id || draftsList[0].id || resolvedSleeperDraftId;
+          }
+        } catch (err) {
+          console.warn("Failed to fetch drafts list for league from Sleeper", err);
+        }
       }
+    }
 
-      const existingPicksCount = draft.picks.length;
+    // Clean up offline mock prefixes if any
+    if (resolvedSleeperDraftId && typeof resolvedSleeperDraftId === "string" && resolvedSleeperDraftId.startsWith("sleeper-draft-")) {
+      resolvedSleeperDraftId = resolvedSleeperDraftId.replace("sleeper-draft-", "");
+    }
+
+    if (!resolvedSleeperDraftId) {
+      return NextResponse.json({ error: "Sleeper Draft ID is required and could not be resolved" }, { status: 400 });
+    }
+
+    // Now query Sleeper API with the correctly resolved Sleeper Draft ID
+    const sleeperPicks = await adapter.getDraftPicks(resolvedSleeperDraftId);
+    
+    // Fetch draft status from Sleeper
+    let draftStatus = "active";
+    try {
+      const draftDetails = await adapter.getDraftDetails(resolvedSleeperDraftId);
+      if (draftDetails.status === "complete") {
+        draftStatus = "completed";
+      } else if (draftDetails.status === "paused") {
+        draftStatus = "paused";
+      }
+    } catch (e) {
+      console.warn("Failed to fetch draft details status from Sleeper, defaulting to active", e);
+    }
+
+    // If database is connected and we found the draft record, sync picks to DB
+    if (dbConnected && dbDraft) {
+      const existingPicksCount = dbDraft.picks.length;
 
       // If Sleeper has new picks, sync them to the database
       if (sleeperPicks.length > existingPicksCount) {
-        const league = draft.league;
+        const league = dbDraft.league;
         const teams = league.teams;
         
         // Build a mapping from Sleeper team identifier to our DB team ID
@@ -70,7 +100,7 @@ export async function POST(req: NextRequest) {
           if (t.externalTeamId) {
             teamMappings[t.externalTeamId] = t.id;
           }
-          // Also map roster slot index
+          // Also map roster slot index and mock keys
           teamMappings[`roster-${t.draftPosition}`] = t.id;
           teamMappings[`mock-team-${t.draftPosition}`] = t.id;
         });
@@ -97,12 +127,17 @@ export async function POST(req: NextRequest) {
             });
           }
 
-          // Resolve team DB ID
-          // Look up by owner_id (p.teamId), fallback to roster key or slot index
-          let teamDbId: string | undefined = teamMappings[p.teamId] || teamMappings[`roster-${p.teamId}`] || teamMappings[p.teamId];
+          // 2. Resolve team DB ID using owner_id or roster fallback
+          let teamDbId = teamMappings[p.teamId] || teamMappings[`roster-${p.teamId}`] || teamMappings[p.teamId];
           
+          if (!teamDbId && p.rosterId) {
+            // Match using rosterId matching draftPosition
+            const matchedTeam = teams.find((t: any) => t.draftPosition === p.rosterId);
+            teamDbId = matchedTeam?.id;
+          }
+
           if (!teamDbId) {
-            // Fallback: match by draft position slot
+            // Ultimate fallback: modulo math
             const slot = p.pickNumber % teams.length || teams.length;
             const matchedTeam = teams.find((t: any) => t.draftPosition === slot);
             teamDbId = matchedTeam?.id;
@@ -112,7 +147,7 @@ export async function POST(req: NextRequest) {
             // 3. Create DraftPick
             await prisma.draftPick.create({
               data: {
-                draftId: draft.id,
+                draftId: dbDraft.id,
                 pickNumber: p.pickNumber,
                 roundNumber: p.roundNumber,
                 teamId: teamDbId,
@@ -136,7 +171,7 @@ export async function POST(req: NextRequest) {
         // Update Draft State
         const updatedCurrentPick = sleeperPicks.length + 1;
         await prisma.draft.update({
-          where: { id: draft.id },
+          where: { id: dbDraft.id },
           data: {
             currentPickNumber: updatedCurrentPick,
             status: draftStatus,
@@ -247,15 +282,14 @@ export async function POST(req: NextRequest) {
         recommendations: recommendations.slice(0, 8),
       });
 
-    } catch (dbError) {
-      // 2. Offline Database Fallback: Return raw Sleeper picks and status for client integration
-      console.warn("Database connection failed during sync. Servicing offline proxy sync.", dbError);
+    } else {
+      // 2. Offline Mode response
       return NextResponse.json({
         success: true,
         offline: true,
         picks: sleeperPicks,
         draftStatus,
-        message: "Offline sync. Sync data from Sleeper API loaded. Local client will update.",
+        message: "Offline sync data loaded.",
       });
     }
 

@@ -45,6 +45,9 @@ export default function DraftRoomPage({ params }: PageProps) {
   const [sortBy, setSortBy] = useState("score"); // score, adp, points, tier
   const [activeMobileTab, setActiveMobileTab] = useState("players"); // board, players, recs, roster, teams
 
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [autoSync, setAutoSync] = useState(false);
+
   // Watchlist & Avoids (saved in localStorage)
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [avoidList, setAvoidList] = useState<string[]>([]);
@@ -155,6 +158,99 @@ export default function DraftRoomPage({ params }: PageProps) {
     setWatchlist(JSON.parse(localStorage.getItem(`watchlist_${draftId}`) || "[]"));
     setAvoidList(JSON.parse(localStorage.getItem(`avoid_${draftId}`) || "[]"));
   }, [draftId]);
+
+  const syncLivePicks = async (showLoading = true) => {
+    if (showLoading) setIsSyncing(true);
+    try {
+      let sleeperDraftId = draftId;
+      if (draftId.startsWith("sleeper-draft-")) {
+        sleeperDraftId = draftId.replace("sleeper-draft-", "");
+      }
+
+      const res = await fetch("/api/integrations/sleeper/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ draftId, sleeperDraftId }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to sync live picks");
+
+      if (data.offline) {
+        const offlineLeagues = JSON.parse(localStorage.getItem("offline_leagues") || "[]");
+        const matchedLeagueIdx = offlineLeagues.findIndex((l: any) => l.drafts.some((d: any) => d.id === draftId));
+
+        if (matchedLeagueIdx !== -1) {
+          const matchedLeague = offlineLeagues[matchedLeagueIdx];
+          const draftIdx = matchedLeague.drafts.findIndex((d: any) => d.id === draftId);
+          if (draftIdx !== -1) {
+            const draft = matchedLeague.drafts[draftIdx];
+            const oldPicksLength = draft.picks?.length || 0;
+            const newPicks = data.picks || [];
+
+            if (newPicks.length !== oldPicksLength) {
+              draft.picks = newPicks.map((p: any) => {
+                let teamId = p.teamId;
+                const matchedTeam = matchedLeague.teams.find(
+                  (t: any) => t.id === p.teamId || t.draftPosition === p.pickNumber % matchedLeague.teamCount || (p.pickNumber % matchedLeague.teamCount === 0 && t.draftPosition === matchedLeague.teamCount)
+                );
+                if (matchedTeam) teamId = matchedTeam.id;
+
+                return {
+                  pickNumber: p.pickNumber,
+                  roundNumber: p.roundNumber,
+                  teamId,
+                  playerId: p.playerId,
+                  player: {
+                    id: p.playerId,
+                    name: `${p.metadata?.first_name || ""} ${p.metadata?.last_name || "Sleeper Player"}`.trim(),
+                    position: p.metadata?.position || "RB",
+                    nflTeam: p.metadata?.team || "FA",
+                    byeWeek: 0,
+                  }
+                };
+              });
+
+              draft.currentPickNumber = draft.picks.length + 1;
+              draft.status = data.draftStatus || "active";
+
+              offlineLeagues[matchedLeagueIdx] = matchedLeague;
+              localStorage.setItem("offline_leagues", JSON.stringify(offlineLeagues));
+              loadOfflineData();
+            }
+          }
+        }
+      } else {
+        setLeagueName(data.league.name);
+        setScoringType(data.league.scoringType);
+        setTeamCount(data.league.teamCount);
+        setDraftType(data.league.draftType);
+        setTotalRounds(data.draft.totalRounds);
+        setCurrentPick(data.draft.currentPickNumber);
+        setDraftStatus(data.draft.status);
+        setTeams(data.teams);
+        setPicks(data.picks);
+        setPlayers(data.availablePlayers);
+      }
+    } catch (err) {
+      console.error("Live sync error:", err);
+    } finally {
+      if (showLoading) setIsSyncing(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!autoSync || draftStatus === "completed") return;
+
+    const isSleeper = draftId.startsWith("sleeper-") || (teams && teams.some((t) => t.externalTeamId && t.externalTeamId !== "null" && !t.externalTeamId.startsWith("mock-team-")));
+    if (!isSleeper) return;
+
+    const interval = setInterval(() => {
+      syncLivePicks(false);
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [autoSync, draftId, draftStatus, teams]);
 
   // Save watchlist / avoid list helper
   const updateWatchlist = (id: string) => {
@@ -491,7 +587,35 @@ export default function DraftRoomPage({ params }: PageProps) {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            {(() => {
+              const isSleeper = draftId.startsWith("sleeper-") || (teams && teams.some((t) => t.externalTeamId && t.externalTeamId !== "null" && !t.externalTeamId.startsWith("mock-team-")));
+              if (!isSleeper) return null;
+
+              return (
+                <div className="flex items-center gap-3 bg-slate-900/40 border border-slate-800/60 rounded-2xl px-3 py-1.5 shrink-0">
+                  <label className="flex items-center gap-2 text-[10px] font-extrabold uppercase tracking-wider text-slate-400 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={autoSync}
+                      onChange={(e) => setAutoSync(e.target.checked)}
+                      className="h-3.5 w-3.5 rounded border-slate-800 bg-slate-950 text-emerald-500 focus:ring-emerald-500/20 focus:ring-offset-0 focus:outline-none cursor-pointer"
+                    />
+                    Auto-Sync (5s)
+                  </label>
+                  <div className="h-4 w-px bg-slate-800" />
+                  <button
+                    onClick={() => syncLivePicks(true)}
+                    disabled={isSyncing}
+                    className="inline-flex items-center gap-1.5 py-1 px-2.5 bg-emerald-500/10 hover:bg-emerald-500 hover:text-slate-950 text-emerald-400 text-[10px] font-bold rounded-lg border border-emerald-500/20 hover:border-emerald-500 transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${isSyncing ? "animate-spin" : ""}`} />
+                    {isSyncing ? "Syncing..." : "Sync Picks"}
+                  </button>
+                </div>
+              );
+            })()}
+
             <button
               onClick={handleUndo}
               disabled={currentPick <= 1}

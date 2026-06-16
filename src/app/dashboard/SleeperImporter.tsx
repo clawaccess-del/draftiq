@@ -23,8 +23,13 @@ export default function SleeperImporter({ defaultUsername = "" }: { defaultUsern
 
   // Trigger search on mount/login if a linked username exists
   useEffect(() => {
-    if (defaultUsername) {
-      performSearch(defaultUsername);
+    const storedUsername = typeof window !== "undefined" ? localStorage.getItem("sleeper_username") : null;
+    const activeUsername = defaultUsername || storedUsername || "";
+    
+    if (activeUsername) {
+      setUsername(activeUsername);
+      setIsLinked(true);
+      performSearch(activeUsername);
     }
   }, [defaultUsername]);
 
@@ -79,6 +84,9 @@ export default function SleeperImporter({ defaultUsername = "" }: { defaultUsern
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to save username");
 
+      if (typeof window !== "undefined") {
+        localStorage.setItem("sleeper_username", sleeperUser.username);
+      }
       setIsLinked(true);
       setSuccessMsg("Account linked to profile! Next time you login, leagues will auto-populate.");
     } catch (err: any) {

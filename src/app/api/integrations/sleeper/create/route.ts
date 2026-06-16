@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "../../../auth/[...nextauth]/route";
 import prisma from "@/lib/prisma";
 import { SleeperAdapter } from "@/lib/integrations/sleeper-adapter";
+import { getDefaultOfflinePlayers } from "@/lib/integrations/default-players";
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -14,6 +15,7 @@ export async function POST(req: NextRequest) {
   try {
     const data = await req.json();
     const { leagueId, draftId, userSleeperId } = data;
+    let resolvedUserSleeperId = userSleeperId;
 
     const adapter = new SleeperAdapter();
     let leagueDetails: any;
@@ -63,12 +65,35 @@ export async function POST(req: NextRequest) {
         raw: draftInfo,
       };
 
+      // Determine the user's Sleeper ID fallback if userSleeperId is missing
+      resolvedUserSleeperId = userSleeperId;
+      if (!resolvedUserSleeperId && draftInfo.draft_order) {
+        const userIds = Object.keys(draftInfo.draft_order);
+        if (userIds.length > 0) {
+          resolvedUserSleeperId = userIds[0];
+        }
+      }
+
       const totalTeams = draftInfo.settings.teams || 12;
+      let hasUserTeam = false;
+
+      if (resolvedUserSleeperId) {
+        for (let slot = 1; slot <= totalTeams; slot++) {
+          const userId = Object.keys(draftInfo.draft_order || {}).find(
+            (key) => draftInfo.draft_order[key] === slot
+          );
+          if (userId === resolvedUserSleeperId) {
+            hasUserTeam = true;
+            break;
+          }
+        }
+      }
+
       for (let slot = 1; slot <= totalTeams; slot++) {
         const userId = Object.keys(draftInfo.draft_order || {}).find(
           (key) => draftInfo.draft_order[key] === slot
         );
-        const isUser = userId === userSleeperId;
+        const isUser = (resolvedUserSleeperId && userId === resolvedUserSleeperId) || (!hasUserTeam && slot === 1);
         let name = `Team ${slot}`;
         let ownerName = `CPU`;
         
@@ -80,6 +105,9 @@ export async function POST(req: NextRequest) {
             name = `Opponent ${slot}`;
             ownerName = `User ${userId.slice(0, 5)}`;
           }
+        } else if (isUser) {
+          name = "My Team";
+          ownerName = "User";
         }
         
         sleeperTeams.push({
@@ -132,10 +160,50 @@ export async function POST(req: NextRequest) {
           },
         });
 
+        // Seed default players and rankings for the new league
+        const defaultPlayers = getDefaultOfflinePlayers();
+        for (const dp of defaultPlayers) {
+          // Find or create Player
+          let player = await tx.player.findFirst({
+            where: {
+              name: { equals: dp.name, mode: "insensitive" },
+              position: { equals: dp.position, mode: "insensitive" },
+            },
+          });
+
+          if (!player) {
+            player = await tx.player.create({
+              data: {
+                id: dp.id,
+                name: dp.name,
+                position: dp.position,
+                nflTeam: dp.nflTeam,
+                byeWeek: dp.byeWeek,
+              },
+            });
+          }
+
+          // Create PlayerRanking for this league
+          await tx.playerRanking.create({
+            data: {
+              playerId: player.id,
+              leagueId: league.id,
+              source: "default",
+              overallRank: dp.overallRank,
+              positionRank: dp.positionRank,
+              projectedPoints: dp.projectedPoints,
+              adp: dp.adp,
+              tier: dp.tier,
+              riskScore: dp.riskScore,
+              notes: dp.notes,
+            },
+          });
+        }
+
         // Create Teams
         const teamMappings: Record<string, string> = {};
         for (const t of sleeperTeams) {
-          const isUser = t.externalTeamId === userSleeperId;
+          const isUser = t.isUserTeam || (resolvedUserSleeperId && t.externalTeamId === resolvedUserSleeperId);
           const createdTeam = await tx.team.create({
             data: {
               leagueId: league.id,

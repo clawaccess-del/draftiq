@@ -136,19 +136,34 @@ export default function SleeperImporter({ defaultUsername = "" }: { defaultUsern
               currentPickNumber: details.picks.length + 1,
               totalRounds: Object.values(details.rosterSettings).reduce((a: any, b: any) => a + b, 0),
               draftType: details.draftType,
-              picks: details.picks.map((p: any) => ({
-                pickNumber: p.pickNumber,
-                roundNumber: p.roundNumber,
-                teamId: details.teams.find((t: any) => t.id === p.teamId)?.id || p.teamId,
-                playerId: p.playerId,
-                player: {
-                  id: p.playerId,
-                  name: `${p.metadata?.first_name || ""} ${p.metadata?.last_name || "Sleeper Player"}`.trim(),
-                  position: p.metadata?.position || "RB",
-                  nflTeam: p.metadata?.team || "FA",
-                  byeWeek: 0,
-                },
-              })),
+              picks: details.picks.map((p: any) => {
+                const matchedTeam = details.teams.find((t: any) => {
+                  if (t.id === p.teamId || (t.externalTeamId && t.externalTeamId === p.teamId)) {
+                    return true;
+                  }
+                  if (p.rosterId && t.draftPosition === p.rosterId) {
+                    return true;
+                  }
+                  const pRosterId = p.rosterId || parseInt(p.teamId?.replace("roster-", "") || p.teamId?.replace("mock-team-", ""));
+                  if (pRosterId && t.draftPosition === pRosterId) {
+                    return true;
+                  }
+                  return false;
+                });
+                return {
+                  pickNumber: p.pickNumber || p.pick_no || p.pickNo,
+                  roundNumber: p.roundNumber || p.round,
+                  teamId: matchedTeam?.id || p.teamId,
+                  playerId: p.playerId || p.player_id,
+                  player: p.player || {
+                    id: p.playerId || p.player_id,
+                    name: `${p.metadata?.first_name || ""} ${p.metadata?.last_name || "Sleeper Player"}`.trim(),
+                    position: p.metadata?.position || "RB",
+                    nflTeam: p.metadata?.team || "FA",
+                    byeWeek: 0,
+                  },
+                };
+              }),
             },
           ],
           players: getDefaultOfflinePlayers(),

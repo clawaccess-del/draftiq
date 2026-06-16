@@ -92,7 +92,29 @@ export default function DraftRoomPage({ params }: PageProps) {
         setUserPosition(uPos);
         setTeams(data.teams);
         setPicks(data.picks);
-        setPlayers(data.availablePlayers);
+        
+        const draftedIds = new Set((data.picks || []).map((p: any) => p.playerId));
+        const apiPlayers = data.availablePlayers || [];
+        if (apiPlayers.length === 0) {
+          const defaultPlayers = getDefaultOfflinePlayers().map((p: any) => ({
+            id: p.id,
+            name: p.name,
+            position: p.position,
+            nflTeam: p.nflTeam,
+            byeWeek: p.byeWeek,
+            injuryStatus: p.injuryStatus,
+            overallRank: p.overallRank,
+            positionRank: p.positionRank,
+            projectedPoints: p.projectedPoints,
+            adp: p.adp,
+            tier: p.tier,
+            riskScore: p.riskScore,
+            notes: p.notes,
+          }));
+          setPlayers(defaultPlayers.filter((p: any) => !draftedIds.has(p.id)));
+        } else {
+          setPlayers(apiPlayers);
+        }
       }
     } catch (err) {
       console.warn("Failed to connect to backend API, falling back to offline localStorage mode.");
@@ -105,12 +127,22 @@ export default function DraftRoomPage({ params }: PageProps) {
 
   const loadOfflineData = () => {
     const offlineLeagues = JSON.parse(localStorage.getItem("offline_leagues") || "[]");
-    const matchedLeague = offlineLeagues.find((l: any) => l.drafts.some((d: any) => d.id === draftId));
+    const matchedLeagueIdx = offlineLeagues.findIndex((l: any) => l.drafts.some((d: any) => d.id === draftId));
 
-    if (!matchedLeague) {
+    if (matchedLeagueIdx === -1) {
       alert("Draft not found. Please set up a league first.");
       router.push("/dashboard");
       return;
+    }
+
+    const matchedLeague = offlineLeagues[matchedLeagueIdx];
+    
+    // Self-heal user team if missing
+    let hasUserTeam = matchedLeague.teams.some((t: any) => t.isUserTeam);
+    if (!hasUserTeam && matchedLeague.teams.length > 0) {
+      matchedLeague.teams[0].isUserTeam = true;
+      offlineLeagues[matchedLeagueIdx] = matchedLeague;
+      localStorage.setItem("offline_leagues", JSON.stringify(offlineLeagues));
     }
 
     const draft = matchedLeague.drafts.find((d: any) => d.id === draftId);
@@ -235,9 +267,34 @@ export default function DraftRoomPage({ params }: PageProps) {
         setTotalRounds(data.draft.totalRounds);
         setCurrentPick(data.draft.currentPickNumber);
         setDraftStatus(data.draft.status);
+        
+        const uPos = data.teams.find((t: any) => t.isUserTeam)?.draftPosition || 1;
+        setUserPosition(uPos);
         setTeams(data.teams);
         setPicks(data.picks);
-        setPlayers(data.availablePlayers);
+        
+        const draftedIds = new Set((data.picks || []).map((p: any) => p.playerId));
+        const apiPlayers = data.availablePlayers || [];
+        if (apiPlayers.length === 0) {
+          const defaultPlayers = getDefaultOfflinePlayers().map((p: any) => ({
+            id: p.id,
+            name: p.name,
+            position: p.position,
+            nflTeam: p.nflTeam,
+            byeWeek: p.byeWeek,
+            injuryStatus: p.injuryStatus,
+            overallRank: p.overallRank,
+            positionRank: p.positionRank,
+            projectedPoints: p.projectedPoints,
+            adp: p.adp,
+            tier: p.tier,
+            riskScore: p.riskScore,
+            notes: p.notes,
+          }));
+          setPlayers(defaultPlayers.filter((p: any) => !draftedIds.has(p.id)));
+        } else {
+          setPlayers(apiPlayers);
+        }
       }
     } catch (err) {
       console.error("Live sync error:", err);
@@ -313,8 +370,18 @@ export default function DraftRoomPage({ params }: PageProps) {
 
   // Rosters mapped for all teams
   const teamRosters = useMemo(() => {
-    return teams.map((team) => {
-      const teamPicks = picks.filter((p) => p.teamId === team.id);
+    const hasUser = teams.some((t) => t.isUserTeam);
+    return teams.map((team, idx) => {
+      const teamPicks = picks.filter((p) => {
+        if (p.teamId === team.id) return true;
+        if (team.externalTeamId && p.teamId === team.externalTeamId) return true;
+        
+        const pRosterId = p.rosterId || parseInt(p.teamId?.replace("roster-", "") || p.teamId?.replace("mock-team-", ""));
+        if (pRosterId && team.draftPosition === pRosterId) return true;
+        
+        return false;
+      });
+      
       const teamPlayers = teamPicks
         .map((pick) => {
           // Find player in available or in backup offline datasets
@@ -328,15 +395,19 @@ export default function DraftRoomPage({ params }: PageProps) {
           };
         });
 
+      const isThisUserTeam = hasUser 
+        ? team.isUserTeam 
+        : (userPosition ? team.draftPosition === userPosition : idx === 0);
+
       return {
         teamId: team.id,
         name: team.name,
-        isUserTeam: team.isUserTeam,
+        isUserTeam: isThisUserTeam,
         draftPosition: team.draftPosition,
         players: teamPlayers,
       };
     });
-  }, [teams, picks, players]);
+  }, [teams, picks, players, userPosition]);
 
   // Available players with watchlist/avoid scores added
   const scoredPlayers = useMemo(() => {

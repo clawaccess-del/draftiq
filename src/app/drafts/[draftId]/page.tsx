@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { generateRecommendations, calculateNextPick } from "@/lib/recommendations/recommendation-engine";
+import { getDefaultOfflinePlayers } from "@/lib/integrations/default-players";
 
 interface PageProps {
   params: Promise<{ draftId: string }>;
@@ -125,20 +126,24 @@ export default function DraftRoomPage({ params }: PageProps) {
     
     // Available players are players from rankings who are not in the picks list
     const draftedIds = new Set((draft.picks || []).map((p: any) => p.playerId));
-    const allPlayersMapped = (matchedLeague.players || []).map((p: any) => ({
+    const leaguePlayers = matchedLeague.players && matchedLeague.players.length > 0
+      ? matchedLeague.players
+      : getDefaultOfflinePlayers();
+
+    const allPlayersMapped = leaguePlayers.map((p: any) => ({
       id: p.id,
       name: p.name,
       position: p.position,
       nflTeam: p.nflTeam,
       byeWeek: p.byeWeek,
       injuryStatus: p.injuryStatus,
-      overallRank: p.rankings[0]?.overallRank || 99,
-      positionRank: p.rankings[0]?.positionRank || 1,
-      projectedPoints: p.rankings[0]?.projectedPoints || 0,
-      adp: p.rankings[0]?.adp || 200,
-      tier: p.rankings[0]?.tier || 10,
-      riskScore: p.rankings[0]?.riskScore || 5,
-      notes: p.rankings[0]?.notes || "",
+      overallRank: p.rankings?.[0]?.overallRank || p.overallRank || 99,
+      positionRank: p.rankings?.[0]?.positionRank || p.positionRank || 1,
+      projectedPoints: p.rankings?.[0]?.projectedPoints || p.projectedPoints || 0,
+      adp: p.rankings?.[0]?.adp || p.adp || 200,
+      tier: p.rankings?.[0]?.tier || p.tier || 10,
+      riskScore: p.rankings?.[0]?.riskScore || p.riskScore || 5,
+      notes: p.rankings?.[0]?.notes || p.notes || "",
     }));
 
     setPlayers(allPlayersMapped.filter((p: any) => !draftedIds.has(p.id)));

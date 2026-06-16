@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, use } from "react";
 import { useRouter } from "next/navigation";
 import { Trophy, ArrowLeft, Users, ChevronRight, HelpCircle, Loader2 } from "lucide-react";
 import Link from "next/link";
+import { getDefaultOfflinePlayers } from "@/lib/integrations/default-players";
 
 interface PageProps {
   params: Promise<{ draftId: string }>;
@@ -79,16 +80,20 @@ export default function TeamRostersPage({ params }: PageProps) {
     setPicks(draft.picks || []);
     
     const draftedIds = new Set((draft.picks || []).map((p: any) => p.playerId));
-    const allPlayersMapped = (matchedLeague.players || []).map((p: any) => ({
+    const leaguePlayers = matchedLeague.players && matchedLeague.players.length > 0
+      ? matchedLeague.players
+      : getDefaultOfflinePlayers();
+
+    const allPlayersMapped = leaguePlayers.map((p: any) => ({
       id: p.id,
       name: p.name,
       position: p.position,
       nflTeam: p.nflTeam,
       byeWeek: p.byeWeek,
-      overallRank: p.rankings[0]?.overallRank || 99,
-      projectedPoints: p.rankings[0]?.projectedPoints || 0,
-      adp: p.rankings[0]?.adp || 200,
-      tier: p.rankings[0]?.tier || 10,
+      overallRank: p.rankings?.[0]?.overallRank || p.overallRank || 99,
+      projectedPoints: p.rankings?.[0]?.projectedPoints || p.projectedPoints || 0,
+      adp: p.rankings?.[0]?.adp || p.adp || 200,
+      tier: p.rankings?.[0]?.tier || p.tier || 10,
     }));
     setPlayers(allPlayersMapped.filter((p: any) => !draftedIds.has(p.id)));
   };

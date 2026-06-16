@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Search, Loader2, ArrowRight, CheckCircle2, AlertTriangle, ShieldCheck, Trophy, Sparkles, PlusCircle } from "lucide-react";
+import { getDefaultOfflinePlayers } from "@/lib/integrations/default-players";
 
 export default function SleeperImporter({ defaultUsername = "" }: { defaultUsername?: string }) {
   const router = useRouter();
@@ -150,7 +151,7 @@ export default function SleeperImporter({ defaultUsername = "" }: { defaultUsern
               })),
             },
           ],
-          players: [],
+          players: getDefaultOfflinePlayers(),
           createdAt: new Date().toISOString(),
         };
 

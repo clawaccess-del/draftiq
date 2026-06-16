@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, use } from "react";
 import { useRouter } from "next/navigation";
 import { Trophy, ArrowLeft, RefreshCw, AlertTriangle, ShieldCheck, Zap, HeartPulse, Sparkles, CheckCircle2, ChevronRight, HelpCircle, Loader2 } from "lucide-react";
 import Link from "next/link";
+import { getDefaultOfflinePlayers } from "@/lib/integrations/default-players";
 
 interface PageProps {
   params: Promise<{ draftId: string }>;
@@ -69,8 +70,30 @@ export default function PostDraftReportPage({ params }: PageProps) {
     const draft = matchedLeague.drafts.find((d: any) => d.id === draftId);
     setLeagueName(matchedLeague.name);
     setScoringType(matchedLeague.scoringType);
-    setPicks(draft.picks || []);
     setTeams(matchedLeague.teams);
+
+    // Load default players to fill in detailed stats (ADP, projections, etc.)
+    const leaguePlayers = matchedLeague.players && matchedLeague.players.length > 0
+      ? matchedLeague.players
+      : getDefaultOfflinePlayers();
+
+    const enrichedPicks = (draft.picks || []).map((p: any) => {
+      const matchedPlayer = leaguePlayers.find((lp: any) => lp.id === p.playerId || lp.name?.toLowerCase() === p.player?.name?.toLowerCase());
+      
+      return {
+        ...p,
+        player: p.player ? {
+          ...p.player,
+          adp: matchedPlayer?.rankings?.[0]?.adp || matchedPlayer?.adp || 150,
+          projectedPoints: matchedPlayer?.rankings?.[0]?.projectedPoints || matchedPlayer?.projectedPoints || 100,
+          riskScore: matchedPlayer?.rankings?.[0]?.riskScore || matchedPlayer?.riskScore || 5,
+          overallRank: matchedPlayer?.rankings?.[0]?.overallRank || matchedPlayer?.overallRank || 150,
+          tier: matchedPlayer?.rankings?.[0]?.tier || matchedPlayer?.tier || 10,
+        } : null
+      };
+    });
+
+    setPicks(enrichedPicks);
 
     const userTeam = matchedLeague.teams.find((t: any) => t.isUserTeam);
     setTeamName(userTeam?.name || "My Team");

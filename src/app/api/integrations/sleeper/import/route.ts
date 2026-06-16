@@ -20,6 +20,15 @@ export async function POST(req: NextRequest) {
     const user = await adapter.getUser(username);
     const leagues = await adapter.getLeagues(user.user_id);
 
+    // Fetch user drafts for both 2026 and 2025
+    const currentYear = new Date().getFullYear();
+    const [drafts2026, drafts2025] = await Promise.all([
+      adapter.getUserDrafts(user.user_id, currentYear.toString()),
+      adapter.getUserDrafts(user.user_id, (currentYear - 1).toString()),
+    ]);
+
+    const allDrafts = [...drafts2026, ...drafts2025];
+
     return NextResponse.json({
       success: true,
       user: {
@@ -35,6 +44,16 @@ export async function POST(req: NextRequest) {
         status: l.status,
         teamCount: l.total_rosters,
         draftId: l.draft_id,
+      })),
+      drafts: allDrafts.map((d: any) => ({
+        draftId: d.draft_id,
+        leagueId: d.league_id,
+        status: d.status,
+        type: d.type,
+        season: d.season,
+        teams: d.settings?.teams || 12,
+        rounds: d.settings?.rounds || 15,
+        name: d.metadata?.name || `Mock Draft ${d.draft_id.slice(0, 6)}`,
       })),
     });
   } catch (error: any) {

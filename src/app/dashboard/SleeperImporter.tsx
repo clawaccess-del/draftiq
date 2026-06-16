@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Search, Loader2, ArrowRight, CheckCircle2, AlertTriangle, ShieldCheck } from "lucide-react";
+import { Search, Loader2, ArrowRight, CheckCircle2, AlertTriangle, ShieldCheck, Trophy, Sparkles, PlusCircle } from "lucide-react";
 
 export default function SleeperImporter({ defaultUsername = "" }: { defaultUsername?: string }) {
   const router = useRouter();
@@ -12,9 +12,14 @@ export default function SleeperImporter({ defaultUsername = "" }: { defaultUsern
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
+  
   const [leagues, setLeagues] = useState<any[]>([]);
+  const [drafts, setDrafts] = useState<any[]>([]);
   const [sleeperUser, setSleeperUser] = useState<any | null>(null);
   const [isLinked, setIsLinked] = useState(!!defaultUsername);
+  
+  const [activeTab, setActiveTab] = useState<"leagues" | "mocks" | "manual">("leagues");
+  const [manualDraftId, setManualDraftId] = useState("");
 
   // Trigger search on mount/login if a linked username exists
   useEffect(() => {
@@ -28,6 +33,7 @@ export default function SleeperImporter({ defaultUsername = "" }: { defaultUsern
     setError("");
     setSuccessMsg("");
     setLeagues([]);
+    setDrafts([]);
     setSleeperUser(null);
 
     try {
@@ -42,6 +48,7 @@ export default function SleeperImporter({ defaultUsername = "" }: { defaultUsern
 
       setSleeperUser(data.user);
       setLeagues(data.leagues || []);
+      setDrafts(data.drafts || []);
     } catch (err: any) {
       setError(err?.message || "Something went wrong searching Sleeper.");
     } finally {
@@ -81,8 +88,7 @@ export default function SleeperImporter({ defaultUsername = "" }: { defaultUsern
     }
   };
 
-  const handleLinkLeague = async (league: any) => {
-    if (!sleeperUser) return;
+  const handleSyncDraftItem = async (draftId: string, leagueId: string | null) => {
     setLoading(true);
     setError("");
 
@@ -91,13 +97,14 @@ export default function SleeperImporter({ defaultUsername = "" }: { defaultUsern
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          leagueId: league.leagueId,
-          userSleeperId: sleeperUser.userId,
+          leagueId,
+          draftId,
+          userSleeperId: sleeperUser?.userId || null,
         }),
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to link Sleeper league");
+      if (!res.ok) throw new Error(data.error || "Failed to link Sleeper draftboard");
 
       // Handle offline local storage save
       if (data.offline) {
@@ -145,19 +152,30 @@ export default function SleeperImporter({ defaultUsername = "" }: { defaultUsern
 
       router.push(`/drafts/${data.draftId}`);
     } catch (err: any) {
-      setError(err?.message || "Failed to sync Sleeper league.");
+      setError(err?.message || "Failed to sync draft.");
     } finally {
       setLoading(false);
     }
   };
 
+  const handleManualSync = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!manualDraftId) return;
+    await handleSyncDraftItem(manualDraftId.trim(), null);
+  };
+
+  // Filter drafts into standalone mocks (no league_id) vs league drafts
+  const mockDrafts = drafts.filter((d) => !d.leagueId);
+
   return (
     <div className="bg-slate-900/40 border border-slate-900 rounded-3xl p-6 space-y-6 shadow-sm">
-      <div>
-        <h3 className="text-base font-bold text-slate-200">Sleeper Platform Sync</h3>
-        <p className="text-xs text-slate-500 mt-0.5">
-          Enter your Sleeper username to fetch your leagues and sync live draft picks automatically.
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-base font-bold text-slate-200">Sleeper Co-Pilot Connection</h3>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Search profile to sync official leagues and mock drafts, or sync any draft ID manually.
+          </p>
+        </div>
       </div>
 
       <form onSubmit={handleSubmit} className="flex gap-2">
@@ -179,7 +197,7 @@ export default function SleeperImporter({ defaultUsername = "" }: { defaultUsern
           disabled={loading}
           className="inline-flex items-center justify-center px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold rounded-xl active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer"
         >
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Search"}
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Search Profile"}
         </button>
       </form>
 
@@ -199,6 +217,7 @@ export default function SleeperImporter({ defaultUsername = "" }: { defaultUsern
 
       {sleeperUser && (
         <div className="space-y-4 pt-2 border-t border-slate-900/60">
+          {/* User Info Header */}
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="h-10 w-10 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-400 font-extrabold uppercase shadow-inner">
@@ -210,7 +229,7 @@ export default function SleeperImporter({ defaultUsername = "" }: { defaultUsern
               </div>
             </div>
 
-            {/* Link Account Button */}
+            {/* Link Account Profile Toggle */}
             {!isLinked ? (
               <button
                 type="button"
@@ -228,37 +247,169 @@ export default function SleeperImporter({ defaultUsername = "" }: { defaultUsern
             )}
           </div>
 
-          <div className="space-y-2">
-            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">NFL Leagues Found ({leagues.length})</p>
-            
-            {leagues.length === 0 ? (
-              <p className="text-xs text-slate-500 italic">No leagues found for this user in the current year.</p>
-            ) : (
-              <div className="space-y-2 max-h-[200px] overflow-y-auto pr-1">
-                {leagues.map((league) => (
-                  <div
-                    key={league.leagueId}
-                    className="flex items-center justify-between p-3 bg-slate-950/60 border border-slate-900 rounded-xl text-xs hover:border-slate-800 transition-all"
-                  >
-                    <div>
-                      <h5 className="font-bold text-slate-200">{league.name}</h5>
-                      <span className="text-[9px] text-slate-500 uppercase font-semibold">
-                        {league.teamCount} Teams — Season {league.season}
-                      </span>
-                    </div>
-
-                    <button
-                      onClick={() => handleLinkLeague(league)}
-                      className="inline-flex items-center gap-1 py-1.5 px-3 bg-emerald-500/10 hover:bg-emerald-500 hover:text-slate-950 text-emerald-400 text-[10px] font-bold rounded-lg border border-emerald-500/20 hover:border-emerald-500 transition-all cursor-pointer"
-                    >
-                      Sync League
-                      <ArrowRight className="h-3 w-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+          {/* Navigation Tabs */}
+          <div className="flex border-b border-slate-900 gap-1.5 text-xs">
+            <button
+              onClick={() => setActiveTab("leagues")}
+              className={`pb-2 px-3 font-bold border-b-2 cursor-pointer transition-all ${
+                activeTab === "leagues"
+                  ? "border-emerald-500 text-emerald-400"
+                  : "border-transparent text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              NFL Leagues ({leagues.length})
+            </button>
+            <button
+              onClick={() => setActiveTab("mocks")}
+              className={`pb-2 px-3 font-bold border-b-2 cursor-pointer transition-all ${
+                activeTab === "mocks"
+                  ? "border-emerald-500 text-emerald-400"
+                  : "border-transparent text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              Sleeper Mocks ({mockDrafts.length})
+            </button>
+            <button
+              onClick={() => setActiveTab("manual")}
+              className={`pb-2 px-3 font-bold border-b-2 cursor-pointer transition-all ${
+                activeTab === "manual"
+                  ? "border-emerald-500 text-emerald-400"
+                  : "border-transparent text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              Manual ID Sync
+            </button>
           </div>
+
+          {/* Tab 1: Leagues List */}
+          {activeTab === "leagues" && (
+            <div className="space-y-2">
+              {leagues.length === 0 ? (
+                <p className="text-xs text-slate-500 italic py-2">No active NFL leagues found for this user.</p>
+              ) : (
+                <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                  {leagues.map((league) => (
+                    <div
+                      key={league.leagueId}
+                      className="flex items-center justify-between p-3 bg-slate-950/60 border border-slate-900 rounded-xl text-xs hover:border-slate-800 transition-all"
+                    >
+                      <div>
+                        <h5 className="font-bold text-slate-200">{league.name}</h5>
+                        <span className="text-[9px] text-slate-500 uppercase font-semibold">
+                          {league.teamCount} Teams — Season {league.season}
+                        </span>
+                      </div>
+
+                      <button
+                        onClick={() => handleSyncDraftItem(league.draftId, league.leagueId)}
+                        disabled={loading}
+                        className="inline-flex items-center gap-1 py-1.5 px-3 bg-emerald-500/10 hover:bg-emerald-500 hover:text-slate-950 text-emerald-400 text-[10px] font-bold rounded-lg border border-emerald-500/20 hover:border-emerald-500 transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        Sync League
+                        <ArrowRight className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Tab 2: Mock Drafts List */}
+          {activeTab === "mocks" && (
+            <div className="space-y-2">
+              {mockDrafts.length === 0 ? (
+                <p className="text-xs text-slate-500 italic py-2">No standalone mock drafts found on this profile.</p>
+              ) : (
+                <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                  {mockDrafts.map((draft) => (
+                    <div
+                      key={draft.draftId}
+                      className="flex items-center justify-between p-3 bg-slate-950/60 border border-slate-900 rounded-xl text-xs hover:border-slate-800 transition-all"
+                    >
+                      <div>
+                        <h5 className="font-bold text-slate-200 flex items-center gap-1.5">
+                          <Trophy className="h-3.5 w-3.5 text-amber-500" />
+                          {draft.name}
+                        </h5>
+                        <span className="text-[9px] text-slate-500 uppercase font-semibold">
+                          {draft.teams} Teams — {draft.rounds} Rounds ({draft.type} style)
+                        </span>
+                      </div>
+
+                      <button
+                        onClick={() => handleSyncDraftItem(draft.draftId, null)}
+                        disabled={loading}
+                        className="inline-flex items-center gap-1 py-1.5 px-3 bg-teal-500/10 hover:bg-teal-500 hover:text-slate-950 text-teal-400 text-[10px] font-bold rounded-lg border border-teal-500/20 hover:border-teal-500 transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        Sync Mock
+                        <ArrowRight className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Tab 3: Direct Manual Sync Form */}
+          {activeTab === "manual" && (
+            <form onSubmit={handleManualSync} className="space-y-3 py-1">
+              <div>
+                <label htmlFor="manualDraftId" className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                  Direct Sleeper Draft ID
+                </label>
+                <p className="text-[10px] text-slate-500 mt-0.5">
+                  Paste the ID of any mock draft or league draft board (found in the Sleeper URL: sleeper.app/draft/nfl/&lt;ID&gt;).
+                </p>
+              </div>
+
+              <div className="flex gap-2">
+                <input
+                  id="manualDraftId"
+                  type="text"
+                  required
+                  placeholder="e.g. 1248565250215661568"
+                  value={manualDraftId}
+                  onChange={(e) => setManualDraftId(e.target.value)}
+                  className="block flex-1 px-4 py-2.5 bg-slate-950/80 border border-slate-900 rounded-xl text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500/60 text-xs transition-all"
+                />
+                <button
+                  type="submit"
+                  disabled={loading || !manualDraftId}
+                  className="inline-flex items-center gap-1.5 px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold rounded-xl active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer"
+                >
+                  <PlusCircle className="h-4 w-4" />
+                  Sync Draft ID
+                </button>
+              </div>
+            </form>
+          )}
+
+        </div>
+      )}
+
+      {/* When no user has searched yet, provide direct Manual Sync Form as a secondary option */}
+      {!sleeperUser && (
+        <div className="pt-4 border-t border-slate-900/60">
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Or Sync Mock directly via Draft ID</p>
+          <form onSubmit={handleManualSync} className="flex gap-2">
+            <input
+              type="text"
+              required
+              placeholder="Enter Draft ID (e.g. 1248565250215661568)"
+              value={manualDraftId}
+              onChange={(e) => setManualDraftId(e.target.value)}
+              className="block flex-1 px-4 py-2 bg-slate-950/80 border border-slate-900 rounded-xl text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500/60 text-xs transition-all"
+            />
+            <button
+              type="submit"
+              disabled={loading || !manualDraftId}
+              className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-xl active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer"
+            >
+              Sync ID
+            </button>
+          </form>
         </div>
       )}
     </div>

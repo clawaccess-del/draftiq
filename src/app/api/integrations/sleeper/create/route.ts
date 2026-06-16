@@ -13,29 +13,95 @@ export async function POST(req: NextRequest) {
 
   try {
     const data = await req.json();
-    const { leagueId, userSleeperId } = data;
-
-    if (!leagueId) {
-      return NextResponse.json({ error: "League ID is required" }, { status: 400 });
-    }
+    const { leagueId, draftId, userSleeperId } = data;
 
     const adapter = new SleeperAdapter();
-    const leagueDetails = await adapter.getLeagueSettings(leagueId);
-    const sleeperTeams = await adapter.getTeams(leagueId);
-    
-    // Get drafts for this league from Sleeper
-    const draftsList = await adapter.getDrafts(leagueId);
-    const activeSleeperDraft = draftsList[0] || {
-      draft_id: leagueDetails.raw?.draft_id,
-      status: "pre_draft",
-      settings: { rounds: 15 },
-    };
+    let leagueDetails: any;
+    let sleeperTeams: any[] = [];
+    let activeSleeperDraft: any;
+    let finalDraftId: string;
+    let finalLeagueId: string;
 
-    const draftId = activeSleeperDraft.draft_id;
+    if (leagueId) {
+      leagueDetails = await adapter.getLeagueSettings(leagueId);
+      sleeperTeams = await adapter.getTeams(leagueId);
+      
+      const draftsList = await adapter.getDrafts(leagueId);
+      activeSleeperDraft = draftsList[0] || {
+        draft_id: leagueDetails.raw?.draft_id,
+        status: "pre_draft",
+        settings: { rounds: 15 },
+      };
+      finalDraftId = activeSleeperDraft.draft_id;
+      finalLeagueId = leagueId;
+    } else if (draftId) {
+      // Standalone Draft ID (Mock Draft) sync
+      const draftInfo = await adapter.getDraftDetails(draftId);
+      
+      const settings = {
+        QB: draftInfo.settings.slots_qb || 0,
+        RB: draftInfo.settings.slots_rb || 0,
+        WR: draftInfo.settings.slots_wr || 0,
+        TE: draftInfo.settings.slots_te || 0,
+        FLEX: draftInfo.settings.slots_flex || 0,
+        SUPERFLEX: draftInfo.settings.slots_super_flex || draftInfo.settings.slots_superflex || 0,
+        K: draftInfo.settings.slots_k || 0,
+        DST: draftInfo.settings.slots_def || 0,
+        BENCH: draftInfo.settings.slots_bn || 0,
+      };
+      
+      const hasSlots = Object.values(settings).some((v) => v > 0);
+      const rosterSettings = hasSlots ? settings : { QB: 1, RB: 2, WR: 2, TE: 1, FLEX: 1, SUPERFLEX: 0, K: 1, DST: 1, BENCH: 6 };
+      
+      leagueDetails = {
+        name: draftInfo.metadata?.name || `Sleeper Mock Draft (${draftId.slice(0, 6)})`,
+        platform: "sleeper",
+        scoringType: draftInfo.metadata?.scoring_type || "ppr",
+        teamCount: draftInfo.settings.teams || 12,
+        draftType: draftInfo.type || "snake",
+        rosterSettings,
+        raw: draftInfo,
+      };
+
+      const totalTeams = draftInfo.settings.teams || 12;
+      for (let slot = 1; slot <= totalTeams; slot++) {
+        const userId = Object.keys(draftInfo.draft_order || {}).find(
+          (key) => draftInfo.draft_order[key] === slot
+        );
+        const isUser = userId === userSleeperId;
+        let name = `Team ${slot}`;
+        let ownerName = `CPU`;
+        
+        if (userId) {
+          if (isUser) {
+            name = "My Team";
+            ownerName = "User";
+          } else {
+            name = `Opponent ${slot}`;
+            ownerName = `User ${userId.slice(0, 5)}`;
+          }
+        }
+        
+        sleeperTeams.push({
+          id: userId || `mock-team-${slot}`,
+          rosterId: slot,
+          name,
+          ownerName,
+          draftPosition: slot,
+          isUserTeam: isUser,
+          externalTeamId: userId || null,
+        });
+      }
+
+      activeSleeperDraft = draftInfo;
+      finalDraftId = draftId;
+      finalLeagueId = `mock-${draftId}`;
+    } else {
+      return NextResponse.json({ error: "League ID or Draft ID is required" }, { status: 400 });
+    }
+
     const totalRounds = activeSleeperDraft.settings?.rounds || Object.values(leagueDetails.rosterSettings).reduce((a: any, b: any) => a + b, 0);
-
-    // Fetch active picks from Sleeper
-    const sleeperPicks = await adapter.getDraftPicks(draftId);
+    const sleeperPicks = await adapter.getDraftPicks(finalDraftId);
 
     const email = session.user.email as string;
 
@@ -58,7 +124,7 @@ export async function POST(req: NextRequest) {
             userId: user.id,
             name: leagueDetails.name,
             platform: "sleeper",
-            externalLeagueId: leagueId,
+            externalLeagueId: finalLeagueId,
             scoringType: leagueDetails.scoringType,
             teamCount: leagueDetails.teamCount,
             draftType: leagueDetails.draftType,
@@ -77,10 +143,11 @@ export async function POST(req: NextRequest) {
               ownerName: t.ownerName,
               draftPosition: t.draftPosition,
               isUserTeam: isUser,
-              externalTeamId: t.externalTeamId,
+              externalTeamId: t.externalTeamId || `mock-team-${t.rosterId}`,
             },
           });
           teamMappings[t.externalTeamId || `roster-${t.rosterId}`] = createdTeam.id;
+          teamMappings[`mock-team-${t.rosterId}`] = createdTeam.id;
         }
 
         // Create Draft
@@ -99,14 +166,11 @@ export async function POST(req: NextRequest) {
 
         // Insert picks if Sleeper draft already has picks
         for (const p of sleeperPicks) {
-          // Find or create player locally
           let player = await tx.player.findFirst({
             where: { id: p.playerId },
           });
 
           if (!player) {
-            // Sleeper player needs mapping, create standard profile fallback
-            // In a real environment, we'd import/map sleeper players, but here we dynamically initialize it
             const pMetadata = p.metadata || {};
             player = await tx.player.create({
               data: {
@@ -119,7 +183,7 @@ export async function POST(req: NextRequest) {
             });
           }
 
-          const teamDbId = teamMappings[p.teamId];
+          const teamDbId = teamMappings[p.teamId] || teamMappings[`mock-team-${p.teamId}`] || teamMappings[p.teamId];
           if (teamDbId) {
             await tx.draftPick.create({
               data: {
@@ -132,13 +196,12 @@ export async function POST(req: NextRequest) {
               },
             });
 
-            // Add to roster
             await tx.roster.create({
               data: {
                 leagueId: league.id,
                 teamId: teamDbId,
                 playerId: player.id,
-                rosterPosition: player.position, // simple position starter mapping
+                rosterPosition: player.position,
               },
             });
           }
@@ -151,13 +214,13 @@ export async function POST(req: NextRequest) {
         success: true,
         leagueId: result.leagueId,
         draftId: result.draftId,
-        message: "Sleeper league successfully synced and saved to database.",
+        message: "Sleeper draft/mock sync successfully saved to database.",
       });
     } catch (dbError) {
       console.warn("Database connection missing. Processing Sleeper link offline.", dbError);
 
-      const mockLeagueId = `sleeper-league-${leagueId}`;
-      const mockDraftId = `sleeper-draft-${draftId || "123"}`;
+      const mockLeagueId = `sleeper-league-${finalLeagueId}`;
+      const mockDraftId = `sleeper-draft-${finalDraftId}`;
 
       return NextResponse.json({
         success: true,
@@ -172,18 +235,18 @@ export async function POST(req: NextRequest) {
           draftType: leagueDetails.draftType,
           rosterSettings: leagueDetails.rosterSettings,
           teams: sleeperTeams.map((t) => ({
-            id: t.externalTeamId || `team-${t.rosterId}`,
+            id: t.externalTeamId || `mock-team-${t.rosterId}`,
             name: t.name,
             ownerName: t.ownerName,
             draftPosition: t.draftPosition,
-            isUserTeam: t.externalTeamId === userSleeperId,
+            isUserTeam: t.isUserTeam,
           })),
           picks: sleeperPicks,
         },
-        message: "Offline sync active. League settings loaded from Sleeper API.",
+        message: "Offline sync active. Standalone draft settings loaded from Sleeper API.",
       });
     }
   } catch (error: any) {
-    return NextResponse.json({ error: error?.message || "Failed to link Sleeper league" }, { status: 500 });
+    return NextResponse.json({ error: error?.message || "Failed to link Sleeper draft" }, { status: 500 });
   }
 }

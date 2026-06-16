@@ -120,4 +120,16 @@ export class SleeperAdapter implements FantasyPlatformAdapter {
       picks,
     };
   }
+
+  async getUserDrafts(userId: string, season: string): Promise<any[]> {
+    const res = await fetch(`${this.baseUrl}/user/${userId}/drafts/nfl/${season}`);
+    if (!res.ok) return [];
+    return await res.json();
+  }
+
+  async getDraftDetails(draftId: string): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/draft/${draftId}`);
+    if (!res.ok) throw new Error(`Draft ${draftId} not found on Sleeper`);
+    return await res.json();
+  }
 }

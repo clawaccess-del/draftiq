@@ -7,4 +7,6 @@ export interface FantasyPlatformAdapter {
   getDrafts(leagueId: string): Promise<any[]>;
   getDraftPicks(draftId: string): Promise<any[]>;
   syncDraft(draftId: string): Promise<any>;
+  getUserDrafts?(userId: string, season: string): Promise<any[]>;
+  getDraftDetails?(draftId: string): Promise<any>;
 }

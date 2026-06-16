@@ -1,24 +1,32 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Search, Loader2, ArrowRight, CheckCircle2, AlertTriangle, ShieldAlert } from "lucide-react";
+import { Search, Loader2, ArrowRight, CheckCircle2, AlertTriangle, ShieldCheck } from "lucide-react";
 
-export default function SleeperImporter() {
+export default function SleeperImporter({ defaultUsername = "" }: { defaultUsername?: string }) {
   const router = useRouter();
 
-  const [username, setUsername] = useState("");
+  const [username, setUsername] = useState(defaultUsername);
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
   const [leagues, setLeagues] = useState<any[]>([]);
   const [sleeperUser, setSleeperUser] = useState<any | null>(null);
+  const [isLinked, setIsLinked] = useState(!!defaultUsername);
 
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!username) return;
+  // Trigger search on mount/login if a linked username exists
+  useEffect(() => {
+    if (defaultUsername) {
+      performSearch(defaultUsername);
+    }
+  }, [defaultUsername]);
 
+  const performSearch = async (uname: string) => {
     setLoading(true);
     setError("");
+    setSuccessMsg("");
     setLeagues([]);
     setSleeperUser(null);
 
@@ -26,7 +34,7 @@ export default function SleeperImporter() {
       const res = await fetch("/api/integrations/sleeper/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username }),
+        body: JSON.stringify({ username: uname }),
       });
 
       const data = await res.json();
@@ -38,6 +46,38 @@ export default function SleeperImporter() {
       setError(err?.message || "Something went wrong searching Sleeper.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (username) {
+      performSearch(username);
+    }
+  };
+
+  const handleLinkProfile = async () => {
+    if (!sleeperUser) return;
+    setSaving(true);
+    setError("");
+    setSuccessMsg("");
+
+    try {
+      const res = await fetch("/api/user/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sleeperUsername: sleeperUser.username }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to save username");
+
+      setIsLinked(true);
+      setSuccessMsg("Account linked to profile! Next time you login, leagues will auto-populate.");
+    } catch (err: any) {
+      setError(err?.message || "Failed to link profile.");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -95,7 +135,7 @@ export default function SleeperImporter() {
               })),
             },
           ],
-          players: [], // rankings will need to be imported or default placeholder rankings
+          players: [],
           createdAt: new Date().toISOString(),
         };
 
@@ -120,7 +160,7 @@ export default function SleeperImporter() {
         </p>
       </div>
 
-      <form onSubmit={handleSearch} className="flex gap-2">
+      <form onSubmit={handleSubmit} className="flex gap-2">
         <div className="relative flex-1">
           <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
             <Search className="h-4 w-4 text-slate-500" />
@@ -150,16 +190,42 @@ export default function SleeperImporter() {
         </div>
       )}
 
+      {successMsg && (
+        <div className="p-3 bg-emerald-950/30 border border-emerald-900/30 text-emerald-300 text-2xs rounded-xl flex items-center gap-2 font-bold animate-pulse">
+          <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+          {successMsg}
+        </div>
+      )}
+
       {sleeperUser && (
         <div className="space-y-4 pt-2 border-t border-slate-900/60">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-400 font-extrabold uppercase shadow-inner">
-              {sleeperUser.displayName.slice(0, 2)}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-400 font-extrabold uppercase shadow-inner">
+                {sleeperUser.displayName.slice(0, 2)}
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-white">{sleeperUser.displayName}</h4>
+                <p className="text-[10px] text-slate-500">Sleeper ID: {sleeperUser.userId}</p>
+              </div>
             </div>
-            <div>
-              <h4 className="text-xs font-bold text-white">{sleeperUser.displayName}</h4>
-              <p className="text-[10px] text-slate-500">Sleeper ID: {sleeperUser.userId}</p>
-            </div>
+
+            {/* Link Account Button */}
+            {!isLinked ? (
+              <button
+                type="button"
+                onClick={handleLinkProfile}
+                disabled={saving}
+                className="py-1 px-2.5 bg-slate-950 hover:bg-slate-900 border border-slate-850 text-slate-300 hover:text-white rounded-lg text-3xs font-extrabold transition-all uppercase tracking-wider cursor-pointer"
+              >
+                {saving ? "Linking..." : "Link Profile"}
+              </button>
+            ) : (
+              <span className="flex items-center text-emerald-400 text-3xs font-extrabold uppercase tracking-wider gap-1.5 bg-emerald-950/20 px-2 py-1 rounded border border-emerald-900/30">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                Linked
+              </span>
+            )}
           </div>
 
           <div className="space-y-2">

@@ -17,6 +17,7 @@ export default async function DashboardPage() {
   const email = session.user.email as string;
   let leagues: any[] = [];
   let dbConnected = true;
+  let sleeperUsername = "";
 
   try {
     const user = await prisma.user.findUnique({
@@ -33,6 +34,7 @@ export default async function DashboardPage() {
 
     if (user) {
       leagues = user.leagues;
+      sleeperUsername = user.sleeperUsername || "";
     }
   } catch (error) {
     console.error("Database connection error in dashboard:", error);
@@ -251,7 +253,7 @@ export default async function DashboardPage() {
 
           {/* Sleeper Sidebar */}
           <div className="lg:col-span-4">
-            <SleeperImporter />
+            <SleeperImporter defaultUsername={sleeperUsername} />
           </div>
         </div>
       </main>

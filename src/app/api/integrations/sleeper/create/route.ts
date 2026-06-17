@@ -214,7 +214,10 @@ export async function POST(req: NextRequest) {
               externalTeamId: t.externalTeamId || `mock-team-${t.rosterId}`,
             },
           });
-          teamMappings[t.externalTeamId || `roster-${t.rosterId}`] = createdTeam.id;
+          if (t.externalTeamId) {
+            teamMappings[t.externalTeamId] = createdTeam.id;
+          }
+          teamMappings[`roster-${t.rosterId}`] = createdTeam.id;
           teamMappings[`mock-team-${t.rosterId}`] = createdTeam.id;
         }
 

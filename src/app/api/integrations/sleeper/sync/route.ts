@@ -99,8 +99,13 @@ export async function POST(req: NextRequest) {
         teams.forEach((t: any) => {
           if (t.externalTeamId) {
             teamMappings[t.externalTeamId] = t.id;
+            
+            // Reconcile roster-X and mock-team-X based on roster ID extracted from externalTeamId
+            const rId = t.externalTeamId.replace("mock-team-", "").replace("roster-", "");
+            teamMappings[`roster-${rId}`] = t.id;
+            teamMappings[`mock-team-${rId}`] = t.id;
           }
-          // Also map roster slot index and mock keys
+          // Also map draftPosition slot index fallback
           teamMappings[`roster-${t.draftPosition}`] = t.id;
           teamMappings[`mock-team-${t.draftPosition}`] = t.id;
         });
@@ -131,7 +136,16 @@ export async function POST(req: NextRequest) {
           let teamDbId = teamMappings[p.teamId] || teamMappings[`roster-${p.teamId}`] || teamMappings[p.teamId];
           
           if (!teamDbId && p.rosterId) {
-            // Match using rosterId matching draftPosition
+            // Match using rosterId matching externalTeamId suffix
+            const matchedTeam = teams.find((t: any) => {
+              const rId = parseInt(t.externalTeamId?.replace("mock-team-", "") || t.externalTeamId?.replace("roster-", "") || "");
+              return rId === p.rosterId;
+            });
+            teamDbId = matchedTeam?.id;
+          }
+
+          if (!teamDbId && p.rosterId) {
+            // Fallback: match using rosterId matching draftPosition
             const matchedTeam = teams.find((t: any) => t.draftPosition === p.rosterId);
             teamDbId = matchedTeam?.id;
           }

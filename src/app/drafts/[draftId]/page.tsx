@@ -377,7 +377,12 @@ export default function DraftRoomPage({ params }: PageProps) {
         if (team.externalTeamId && p.teamId === team.externalTeamId) return true;
         
         const pRosterId = p.rosterId || parseInt(p.teamId?.replace("roster-", "") || p.teamId?.replace("mock-team-", ""));
-        if (pRosterId && team.draftPosition === pRosterId) return true;
+        if (pRosterId) {
+          const teamRosterId = parseInt(team.externalTeamId?.replace("mock-team-", "").replace("roster-", "") || "");
+          if (teamRosterId && teamRosterId === pRosterId) return true;
+          
+          if (team.draftPosition === pRosterId) return true;
+        }
         
         return false;
       });

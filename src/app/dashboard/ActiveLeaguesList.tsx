@@ -134,22 +134,36 @@ export default function ActiveLeaguesList({ initialLeagues, dbConnected }: Activ
     setLeagues(merged);
   }, [initialLeagues]);
 
-  const handleDeleteOfflineLeague = (leagueId: string, e: React.MouseEvent) => {
+  const handleDeleteLeague = async (league: League, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
 
-    if (!confirm("Are you sure you want to delete this sandbox league and all its draft picks?")) {
+    const modeText = league.isOffline ? "sandbox league" : "database draft room";
+    if (!confirm(`Are you sure you want to delete this ${modeText} and all its draft picks?`)) {
       return;
     }
 
-    const storedOffline = typeof window !== "undefined" ? localStorage.getItem("offline_leagues") : null;
-    if (storedOffline) {
-      const offlineLeagues: League[] = JSON.parse(storedOffline);
-      const filtered = offlineLeagues.filter((l) => l.id !== leagueId);
-      localStorage.setItem("offline_leagues", JSON.stringify(filtered));
-      
-      // Update state
-      setLeagues((prev) => prev.filter((l) => l.id !== leagueId));
+    if (league.isOffline) {
+      const storedOffline = typeof window !== "undefined" ? localStorage.getItem("offline_leagues") : null;
+      if (storedOffline) {
+        const offlineLeagues: League[] = JSON.parse(storedOffline);
+        const filtered = offlineLeagues.filter((l) => l.id !== league.id);
+        localStorage.setItem("offline_leagues", JSON.stringify(filtered));
+        setLeagues((prev) => prev.filter((l) => l.id !== league.id));
+      }
+    } else {
+      try {
+        const res = await fetch(`/api/leagues/${league.id}`, {
+          method: "DELETE",
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to delete league");
+
+        // Update state
+        setLeagues((prev) => prev.filter((l) => l.id !== league.id));
+      } catch (err: any) {
+        alert(err?.message || "Failed to delete league from database.");
+      }
     }
   };
 
@@ -240,15 +254,13 @@ export default function ActiveLeaguesList({ initialLeagues, dbConnected }: Activ
                       year: "numeric",
                     })}
                   </span>
-                  {league.isOffline && (
-                    <button
-                      onClick={(e) => handleDeleteOfflineLeague(league.id, e)}
-                      className="p-1.5 text-slate-600 hover:text-red-400 hover:bg-red-950/20 rounded-lg transition-all border border-transparent hover:border-red-900/30"
-                      title="Delete sandbox league"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  )}
+                  <button
+                    onClick={(e) => handleDeleteLeague(league, e)}
+                    className="p-1.5 text-slate-600 hover:text-red-400 hover:bg-red-950/20 rounded-lg transition-all border border-transparent hover:border-red-900/30"
+                    title={league.isOffline ? "Delete sandbox league" : "Delete draft room"}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
                 </div>
               </div>
 

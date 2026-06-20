@@ -61,6 +61,7 @@ export default function DraftRoomPage({ params }: PageProps) {
   const [currentPick, setCurrentPick] = useState(1);
   const [draftStatus, setDraftStatus] = useState("setup");
   const [userPosition, setUserPosition] = useState(1);
+  const [platform, setPlatform] = useState("manual");
   
   const [teams, setTeams] = useState<any[]>([]);
   const [picks, setPicks] = useState<any[]>([]);
@@ -81,6 +82,7 @@ export default function DraftRoomPage({ params }: PageProps) {
       } else {
         setOffline(false);
         setLeagueName(data.league.name);
+        setPlatform(data.league.platform || "manual");
         setScoringType(data.league.scoringType);
         setTeamCount(data.league.teamCount);
         setDraftType(data.league.draftType);
@@ -147,6 +149,7 @@ export default function DraftRoomPage({ params }: PageProps) {
 
     const draft = matchedLeague.drafts.find((d: any) => d.id === draftId);
     setLeagueName(matchedLeague.name);
+    setPlatform(matchedLeague.platform || "manual");
     setScoringType(matchedLeague.scoringType);
     setTeamCount(matchedLeague.teamCount);
     setDraftType(matchedLeague.draftType);
@@ -261,6 +264,7 @@ export default function DraftRoomPage({ params }: PageProps) {
         }
       } else {
         setLeagueName(data.league.name);
+        setPlatform(data.league.platform || "manual");
         setScoringType(data.league.scoringType);
         setTeamCount(data.league.teamCount);
         setDraftType(data.league.draftType);
@@ -306,7 +310,7 @@ export default function DraftRoomPage({ params }: PageProps) {
   useEffect(() => {
     if (!autoSync || draftStatus === "completed") return;
 
-    const isSleeper = draftId.startsWith("sleeper-") || (teams && teams.some((t) => t.externalTeamId && t.externalTeamId !== "null" && !t.externalTeamId.startsWith("mock-team-")));
+    const isSleeper = platform === "sleeper" || draftId.startsWith("sleeper-") || (teams && teams.some((t) => t.externalTeamId && t.externalTeamId !== "null" && !t.externalTeamId.startsWith("mock-team-")));
     if (!isSleeper) return;
 
     const interval = setInterval(() => {
@@ -314,7 +318,7 @@ export default function DraftRoomPage({ params }: PageProps) {
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [autoSync, draftId, draftStatus, teams]);
+  }, [autoSync, draftId, draftStatus, teams, platform]);
 
   // Save watchlist / avoid list helper
   const updateWatchlist = (id: string) => {
@@ -672,7 +676,7 @@ export default function DraftRoomPage({ params }: PageProps) {
 
           <div className="flex items-center gap-3">
             {(() => {
-              const isSleeper = draftId.startsWith("sleeper-") || (teams && teams.some((t) => t.externalTeamId && t.externalTeamId !== "null" && !t.externalTeamId.startsWith("mock-team-")));
+              const isSleeper = platform === "sleeper" || draftId.startsWith("sleeper-") || (teams && teams.some((t) => t.externalTeamId && t.externalTeamId !== "null" && !t.externalTeamId.startsWith("mock-team-")));
               if (!isSleeper) return null;
 
               return (

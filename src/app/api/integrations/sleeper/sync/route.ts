@@ -113,84 +113,97 @@ export async function POST(req: NextRequest) {
         // Filter for new picks
         const newPicks = sleeperPicks.slice(existingPicksCount);
 
-        for (const p of newPicks) {
-          // 1. Ensure Player exists in DB
-          let player = await prisma.player.findFirst({
-            where: { id: p.playerId },
+        if (newPicks.length > 0) {
+          const newPlayerIds = newPicks.map((p) => p.playerId);
+          const existingPlayers = await prisma.player.findMany({
+            where: { id: { in: newPlayerIds } },
           });
+          const existingPlayerIds = new Set(existingPlayers.map((p) => p.id));
 
-          if (!player) {
-            const pMetadata = p.metadata || {};
-            player = await prisma.player.create({
-              data: {
+          const missingPlayersData = [];
+          const processedPlayerIds = new Set();
+          for (const p of newPicks) {
+            if (!existingPlayerIds.has(p.playerId) && !processedPlayerIds.has(p.playerId)) {
+              const pMetadata = p.metadata || {};
+              missingPlayersData.push({
                 id: p.playerId,
                 name: `${pMetadata.first_name || ""} ${pMetadata.last_name || "Unknown Player"}`.trim() || "Sleeper Player",
                 position: pMetadata.position || "RB",
                 nflTeam: pMetadata.team || "FA",
                 byeWeek: 0,
-              },
+              });
+              processedPlayerIds.add(p.playerId);
+            }
+          }
+
+          if (missingPlayersData.length > 0) {
+            await prisma.player.createMany({
+              data: missingPlayersData,
+              skipDuplicates: true,
             });
           }
 
-          // 2. Resolve team DB ID using owner_id or roster fallback
-          let teamDbId = teamMappings[p.teamId] || teamMappings[`roster-${p.teamId}`] || teamMappings[p.teamId];
-          
-          if (!teamDbId && p.rosterId) {
-            // Match using rosterId matching externalTeamId suffix
-            const matchedTeam = teams.find((t: any) => {
-              const rId = parseInt(t.externalTeamId?.replace("mock-team-", "") || t.externalTeamId?.replace("roster-", "") || "");
-              return rId === p.rosterId;
-            });
-            teamDbId = matchedTeam?.id;
-          }
+          const picksToCreate = [];
+          const rostersToCreate = [];
 
-          if (!teamDbId && p.rosterId) {
-            // Fallback: match using rosterId matching draftPosition
-            const matchedTeam = teams.find((t: any) => t.draftPosition === p.rosterId);
-            teamDbId = matchedTeam?.id;
-          }
+          for (const p of newPicks) {
+            let teamDbId = teamMappings[p.teamId] || teamMappings[`roster-${p.teamId}`];
+            if (!teamDbId && p.rosterId) {
+              const matchedTeam = teams.find((t: any) => {
+                const rId = parseInt(t.externalTeamId?.replace("mock-team-", "") || t.externalTeamId?.replace("roster-", "") || "");
+                return rId === p.rosterId;
+              });
+              teamDbId = matchedTeam?.id;
+            }
+            if (!teamDbId && p.rosterId) {
+              const matchedTeam = teams.find((t: any) => t.draftPosition === p.rosterId);
+              teamDbId = matchedTeam?.id;
+            }
+            if (!teamDbId) {
+              const slot = p.pickNumber % teams.length || teams.length;
+              const matchedTeam = teams.find((t: any) => t.draftPosition === slot);
+              teamDbId = matchedTeam?.id;
+            }
 
-          if (!teamDbId) {
-            // Ultimate fallback: modulo math
-            const slot = p.pickNumber % teams.length || teams.length;
-            const matchedTeam = teams.find((t: any) => t.draftPosition === slot);
-            teamDbId = matchedTeam?.id;
-          }
-
-          if (teamDbId) {
-            // 3. Create DraftPick
-            await prisma.draftPick.create({
-              data: {
+            if (teamDbId) {
+              picksToCreate.push({
                 draftId: dbDraft.id,
                 pickNumber: p.pickNumber,
                 roundNumber: p.roundNumber,
                 teamId: teamDbId,
-                playerId: player.id,
+                playerId: p.playerId,
                 source: "sleeper",
-              },
-            });
+              });
 
-            // 4. Create Roster record
-            await prisma.roster.create({
-              data: {
+              const pDetails = missingPlayersData.find((pl) => pl.id === p.playerId) || existingPlayers.find((pl) => pl.id === p.playerId);
+              const pPosition = pDetails?.position || "RB";
+
+              rostersToCreate.push({
                 leagueId: league.id,
                 teamId: teamDbId,
-                playerId: player.id,
-                rosterPosition: player.position,
-              },
-            });
+                playerId: p.playerId,
+                rosterPosition: pPosition,
+              });
+            }
           }
-        }
 
-        // Update Draft State
-        const updatedCurrentPick = sleeperPicks.length + 1;
-        await prisma.draft.update({
-          where: { id: dbDraft.id },
-          data: {
-            currentPickNumber: updatedCurrentPick,
-            status: draftStatus,
-          },
-        });
+          if (picksToCreate.length > 0) {
+            await prisma.draftPick.createMany({ data: picksToCreate });
+          }
+          if (rostersToCreate.length > 0) {
+            await prisma.roster.createMany({ data: rostersToCreate });
+          }
+
+          // Update Draft State
+          const updatedCurrentPick = sleeperPicks.length + 1;
+          await prisma.draft.update({
+            where: { id: dbDraft.id },
+            data: {
+              currentPickNumber: updatedCurrentPick,
+              status: draftStatus,
+            },
+          });
+        }
       }
 
       // Reload fresh data from database to return to client

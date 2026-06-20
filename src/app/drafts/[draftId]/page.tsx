@@ -67,6 +67,42 @@ export default function DraftRoomPage({ params }: PageProps) {
   const [picks, setPicks] = useState<any[]>([]);
   const [players, setPlayers] = useState<any[]>([]);
 
+  const handleUserPositionChange = async (newPos: number) => {
+    setUserPosition(newPos);
+
+    // Update isUserTeam on local teams state
+    setTeams((prevTeams) => {
+      const updated = prevTeams.map((t) => ({
+        ...t,
+        isUserTeam: t.draftPosition === newPos,
+      }));
+
+      // If offline, save this updated team list to localStorage
+      if (offline) {
+        const offlineLeagues = JSON.parse(localStorage.getItem("offline_leagues") || "[]");
+        const matchedIdx = offlineLeagues.findIndex((l: any) => l.drafts.some((d: any) => d.id === draftId));
+        if (matchedIdx !== -1) {
+          offlineLeagues[matchedIdx].teams = updated;
+          localStorage.setItem("offline_leagues", JSON.stringify(offlineLeagues));
+        }
+      }
+      return updated;
+    });
+
+    // If online, send an API call to sync the user position update to the DB
+    if (!offline) {
+      try {
+        await fetch(`/api/drafts/${draftId}/position`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userPosition: newPos }),
+        });
+      } catch (err) {
+        console.error("Failed to update user position on server:", err);
+      }
+    }
+  };
+
   // Fetch Draft Data
   const fetchDraftData = async () => {
     try {
@@ -89,6 +125,10 @@ export default function DraftRoomPage({ params }: PageProps) {
         setTotalRounds(data.draft.totalRounds);
         setCurrentPick(data.draft.currentPickNumber);
         setDraftStatus(data.draft.status);
+        
+        if (data.league.platform === "sleeper" || draftId.startsWith("sleeper-") || draftId.includes("sleeper")) {
+          setAutoSync(true);
+        }
         
         const uPos = data.teams.find((t: any) => t.isUserTeam)?.draftPosition || 1;
         setUserPosition(uPos);
@@ -156,6 +196,10 @@ export default function DraftRoomPage({ params }: PageProps) {
     setTotalRounds(draft.totalRounds);
     setCurrentPick(draft.currentPickNumber);
     setDraftStatus(draft.status);
+    
+    if (matchedLeague.platform === "sleeper" || draftId.startsWith("sleeper-") || draftId.includes("sleeper")) {
+      setAutoSync(true);
+    }
     
     const uPos = matchedLeague.teams.find((t: any) => t.isUserTeam)?.draftPosition || 1;
     setUserPosition(uPos);
@@ -310,15 +354,12 @@ export default function DraftRoomPage({ params }: PageProps) {
   useEffect(() => {
     if (!autoSync || draftStatus === "completed") return;
 
-    const isSleeper = platform === "sleeper" || draftId.startsWith("sleeper-") || (teams && teams.some((t) => t.externalTeamId && t.externalTeamId !== "null" && !t.externalTeamId.startsWith("mock-team-")));
-    if (!isSleeper) return;
-
     const interval = setInterval(() => {
       syncLivePicks(false);
-    }, 5000);
+    }, 1500);
 
     return () => clearInterval(interval);
-  }, [autoSync, draftId, draftStatus, teams, platform]);
+  }, [autoSync, draftId, draftStatus]);
 
   // Save watchlist / avoid list helper
   const updateWatchlist = (id: string) => {
@@ -367,10 +408,19 @@ export default function DraftRoomPage({ params }: PageProps) {
     return teams.find((t) => t.draftPosition === targetPosition) || null;
   }, [currentPick, teamCount, teams, draftType]);
 
+  const isUserOnClock = useMemo(() => {
+    return !!(currentTeamOnClock?.isUserTeam || (userPosition && currentTeamOnClock?.draftPosition === userPosition));
+  }, [currentTeamOnClock, userPosition]);
+
+  const userNextPickNumber = useMemo(() => {
+    if (isUserOnClock) return currentPick;
+    return calculateNextPick(currentPick, teamCount, userPosition, draftType as any, totalRounds);
+  }, [isUserOnClock, currentPick, teamCount, userPosition, draftType, totalRounds]);
+
   const picksUntilUser = useMemo(() => {
-    const nextUser = calculateNextPick(currentPick, teamCount, userPosition, draftType as any, totalRounds);
-    return Math.max(0, nextUser - currentPick);
-  }, [currentPick, teamCount, userPosition, draftType, totalRounds]);
+    if (isUserOnClock) return 0;
+    return Math.max(0, userNextPickNumber - currentPick);
+  }, [isUserOnClock, userNextPickNumber, currentPick]);
 
   // Rosters mapped for all teams
   const teamRosters = useMemo(() => {
@@ -503,6 +553,47 @@ export default function DraftRoomPage({ params }: PageProps) {
     return userTeamData?.players || [];
   }, [teamRosters]);
 
+  const rosterAssignment = useMemo(() => {
+    const remaining = [...userRosterPlayers];
+    const assignments: Record<string, any[]> = {
+      QB: [],
+      RB: [],
+      WR: [],
+      TE: [],
+      FLEX: [],
+      SUPERFLEX: [],
+      K: [],
+      DST: [],
+      BENCH: []
+    };
+
+    const fillPosition = (posKey: string, allowedPositions: string[], limit: number) => {
+      let count = 0;
+      for (let i = 0; i < remaining.length; i++) {
+        if (count >= limit) break;
+        if (allowedPositions.includes(remaining[i].position?.toUpperCase())) {
+          assignments[posKey].push(remaining[i]);
+          remaining.splice(i, 1);
+          i--;
+          count++;
+        }
+      }
+    };
+
+    fillPosition("QB", ["QB"], rosterSettings.QB || 0);
+    fillPosition("RB", ["RB"], rosterSettings.RB || 0);
+    fillPosition("WR", ["WR"], rosterSettings.WR || 0);
+    fillPosition("TE", ["TE"], rosterSettings.TE || 0);
+    fillPosition("K", ["K"], rosterSettings.K || 0);
+    fillPosition("DST", ["DST", "DEF"], rosterSettings.DST || 0);
+    fillPosition("FLEX", ["RB", "WR", "TE"], rosterSettings.FLEX || 0);
+    fillPosition("SUPERFLEX", ["QB", "RB", "WR", "TE"], rosterSettings.SUPERFLEX || 0);
+
+    assignments.BENCH = remaining;
+
+    return assignments;
+  }, [userRosterPlayers, rosterSettings]);
+
   // Draft pick submission handler
   const handleDraftPick = async (player: any) => {
     if (!currentTeamOnClock) return;
@@ -628,8 +719,6 @@ export default function DraftRoomPage({ params }: PageProps) {
     );
   }
 
-  const userNextPickNumber = calculateNextPick(currentPick, teamCount, userPosition, draftType as any, totalRounds);
-
   return (
     <div className="flex-1 flex flex-col bg-slate-950 min-h-screen text-slate-200">
       {/* Top Banner Bar */}
@@ -664,6 +753,24 @@ export default function DraftRoomPage({ params }: PageProps) {
               <p className="text-sm font-black text-emerald-400 truncate max-w-[100px] sm:max-w-none">
                 {currentTeamOnClock?.isUserTeam ? "YOUR PICK" : currentTeamOnClock?.name || "None"}
               </p>
+            </div>
+            <div className="h-6 w-px bg-slate-900" />
+            <div className="text-center">
+              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">My Slot</p>
+              <select
+                value={userPosition}
+                onChange={(e) => handleUserPositionChange(parseInt(e.target.value))}
+                className="mt-0.5 block w-20 px-1 py-0.5 bg-slate-900 border border-slate-800 rounded-lg text-xs font-bold text-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-500/20 cursor-pointer text-center"
+              >
+                {Array.from({ length: teamCount }).map((_, idx) => {
+                  const pos = idx + 1;
+                  return (
+                    <option key={pos} value={pos} className="bg-slate-950 text-slate-200">
+                      Pick {pos}
+                    </option>
+                  );
+                })}
+              </select>
             </div>
             <div className="h-6 w-px bg-slate-900" />
             <div className="text-center hidden md:block">
@@ -1079,8 +1186,7 @@ export default function DraftRoomPage({ params }: PageProps) {
                 if (limit === 0) return null;
 
                 // Find drafted players assigned to this roster position
-                // Wait! Since the client needs to map players into starter slots, let's filter:
-                const assigned = userRosterPlayers.filter((p) => p.position === pos).slice(0, limit);
+                const assigned = rosterAssignment[pos] || [];
                 const emptiesCount = Math.max(0, limit - assigned.length);
 
                 return (
@@ -1114,9 +1220,7 @@ export default function DraftRoomPage({ params }: PageProps) {
               {/* Bench */}
               <div className="pt-2 border-t border-slate-900/60 space-y-1.5">
                 <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Bench</p>
-                {userRosterPlayers.slice(
-                  rosterSettings.QB + rosterSettings.RB + rosterSettings.WR + rosterSettings.TE + rosterSettings.FLEX + rosterSettings.SUPERFLEX + rosterSettings.K + rosterSettings.DST
-                ).map((p) => (
+                {(rosterAssignment.BENCH || []).map((p) => (
                   <div key={p.id} className="flex items-center justify-between p-2.5 bg-slate-950/40 border border-slate-900/40 rounded-xl text-xs text-slate-400">
                     <div className="flex items-center gap-2">
                       <span className="text-3xs font-extrabold uppercase text-slate-600 border border-slate-850 px-1 py-0.5 rounded">

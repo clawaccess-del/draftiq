@@ -49,7 +49,18 @@ export default function TeamRostersPage({ params }: PageProps) {
         setTotalRounds(data.draft.totalRounds);
         setTeams(data.teams);
         setPicks(data.picks);
-        setPlayers(data.availablePlayers);
+        const allPlayers = data.league?.rankings?.map((r: any) => ({
+          id: r.player.id,
+          name: r.player.name,
+          position: r.player.position,
+          nflTeam: r.player.nflTeam,
+          byeWeek: r.player.byeWeek,
+          overallRank: r.overallRank,
+          projectedPoints: r.projectedPoints,
+          adp: r.adp,
+          tier: r.tier,
+        })) || data.availablePlayers || [];
+        setPlayers(allPlayers);
       }
     } catch (err) {
       console.warn("Backend error fetching rosters, loading offline mode.");
@@ -95,7 +106,7 @@ export default function TeamRostersPage({ params }: PageProps) {
       adp: p.rankings?.[0]?.adp || p.adp || 200,
       tier: p.rankings?.[0]?.tier || p.tier || 10,
     }));
-    setPlayers(allPlayersMapped.filter((p: any) => !draftedIds.has(p.id)));
+    setPlayers(allPlayersMapped);
   };
 
   useEffect(() => {
@@ -105,7 +116,20 @@ export default function TeamRostersPage({ params }: PageProps) {
   // Complete Roster Maps
   const detailedRosters = useMemo(() => {
     return teams.map((team) => {
-      const teamPicks = picks.filter((p) => p.teamId === team.id);
+      const teamPicks = picks.filter((p) => {
+        if (p.teamId === team.id) return true;
+        if (team.externalTeamId && p.teamId === team.externalTeamId) return true;
+        
+        const pRosterId = p.rosterId || parseInt(p.teamId?.replace("roster-", "") || p.teamId?.replace("mock-team-", ""));
+        if (pRosterId) {
+          const teamRosterId = parseInt(team.externalTeamId?.replace("mock-team-", "").replace("roster-", "") || "");
+          if (teamRosterId && teamRosterId === pRosterId) return true;
+          
+          if (team.draftPosition === pRosterId) return true;
+        }
+        
+        return false;
+      });
       const teamPlayers = teamPicks
         .map((pick) => {
           return players.find((p) => p.id === pick.playerId) || pick.player || {

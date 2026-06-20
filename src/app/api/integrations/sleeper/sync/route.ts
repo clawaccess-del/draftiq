@@ -5,6 +5,16 @@ import prisma from "@/lib/prisma";
 import { SleeperAdapter } from "@/lib/integrations/sleeper-adapter";
 import { generateRecommendations } from "@/lib/recommendations/recommendation-engine";
 
+function cleanPlayerName(name: string): string {
+  if (!name) return "";
+  return name
+    .toLowerCase()
+    .replace(/['.]/g, "")
+    .replace(/\b(jr|sr|ii|iii|iv|v)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
 
@@ -115,24 +125,76 @@ export async function POST(req: NextRequest) {
 
         if (newPicks.length > 0) {
           const newPlayerIds = newPicks.map((p) => p.playerId);
-          const existingPlayers = await prisma.player.findMany({
+          const newPlayerNames = newPicks.map((p) => `${p.metadata?.first_name || ""} ${p.metadata?.last_name || ""}`.trim());
+
+          // 1. Fetch existing players by Sleeper ID
+          const existingPlayersById = await prisma.player.findMany({
             where: { id: { in: newPlayerIds } },
           });
-          const existingPlayerIds = new Set(existingPlayers.map((p) => p.id));
+
+          // 2. Fetch existing players by Name to match CSV imported ones
+          const existingPlayersByName = await prisma.player.findMany({
+            where: {
+              name: { in: newPlayerNames },
+            },
+          });
+
+          // Map Sleeper Player ID to the authoritative DB Player ID
+          const playerMap = new Map<string, string>();
+          const playerRecordsMap = new Map<string, any>();
+
+          // Extract rankings players from dbDraft
+          const rankingsPlayers = dbDraft.league.rankings.map((r: any) => r.player);
+
+          for (const p of newPicks) {
+            const name = `${p.metadata?.first_name || ""} ${p.metadata?.last_name || ""}`.trim();
+            const position = p.metadata?.position?.toUpperCase() || "RB";
+
+            // 1. Try matching by Sleeper ID first
+            const matchedById = existingPlayersById.find((pl) => pl.id === p.playerId);
+            if (matchedById) {
+              playerMap.set(p.playerId, matchedById.id);
+              playerRecordsMap.set(matchedById.id, matchedById);
+              continue;
+            }
+
+            // 2. Try matching by name and position in rankings using cleanPlayerName (highly accurate for CSV rankings matching)
+            const matchedInRankings = rankingsPlayers.find(
+              (pl: any) => cleanPlayerName(pl.name) === cleanPlayerName(name) && pl.position.toUpperCase() === position
+            );
+            if (matchedInRankings) {
+              playerMap.set(p.playerId, matchedInRankings.id);
+              playerRecordsMap.set(matchedInRankings.id, matchedInRankings);
+              continue;
+            }
+
+            // 3. Try matching by name and position in existingPlayersByName using cleanPlayerName (for other database matches)
+            const matchedByName = existingPlayersByName.find(
+              (pl) => cleanPlayerName(pl.name) === cleanPlayerName(name) && pl.position.toUpperCase() === position
+            );
+            if (matchedByName) {
+              playerMap.set(p.playerId, matchedByName.id);
+              playerRecordsMap.set(matchedByName.id, matchedByName);
+              continue;
+            }
+          }
 
           const missingPlayersData = [];
           const processedPlayerIds = new Set();
           for (const p of newPicks) {
-            if (!existingPlayerIds.has(p.playerId) && !processedPlayerIds.has(p.playerId)) {
+            if (!playerMap.has(p.playerId) && !processedPlayerIds.has(p.playerId)) {
               const pMetadata = p.metadata || {};
-              missingPlayersData.push({
+              const newPlayer = {
                 id: p.playerId,
                 name: `${pMetadata.first_name || ""} ${pMetadata.last_name || "Unknown Player"}`.trim() || "Sleeper Player",
                 position: pMetadata.position || "RB",
                 nflTeam: pMetadata.team || "FA",
                 byeWeek: 0,
-              });
+              };
+              missingPlayersData.push(newPlayer);
               processedPlayerIds.add(p.playerId);
+              playerMap.set(p.playerId, p.playerId);
+              playerRecordsMap.set(p.playerId, newPlayer);
             }
           }
 
@@ -166,22 +228,24 @@ export async function POST(req: NextRequest) {
             }
 
             if (teamDbId) {
+              const dbPlayerId = playerMap.get(p.playerId) || p.playerId;
+
               picksToCreate.push({
                 draftId: dbDraft.id,
                 pickNumber: p.pickNumber,
                 roundNumber: p.roundNumber,
                 teamId: teamDbId,
-                playerId: p.playerId,
+                playerId: dbPlayerId,
                 source: "sleeper",
               });
 
-              const pDetails = missingPlayersData.find((pl) => pl.id === p.playerId) || existingPlayers.find((pl) => pl.id === p.playerId);
+              const pDetails = playerRecordsMap.get(dbPlayerId);
               const pPosition = pDetails?.position || "RB";
 
               rostersToCreate.push({
                 leagueId: league.id,
                 teamId: teamDbId,
-                playerId: p.playerId,
+                playerId: dbPlayerId,
                 rosterPosition: pPosition,
               });
             }

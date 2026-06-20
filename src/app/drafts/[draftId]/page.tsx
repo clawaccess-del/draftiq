@@ -27,6 +27,16 @@ import Link from "next/link";
 import { generateRecommendations, calculateNextPick } from "@/lib/recommendations/recommendation-engine";
 import { getDefaultOfflinePlayers } from "@/lib/integrations/default-players";
 
+function cleanPlayerName(name: string): string {
+  if (!name) return "";
+  return name
+    .toLowerCase()
+    .replace(/['.]/g, "")
+    .replace(/\b(jr|sr|ii|iii|iv|v)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 interface PageProps {
   params: Promise<{ draftId: string }>;
 }
@@ -290,15 +300,27 @@ export default function DraftRoomPage({ params }: PageProps) {
                 });
                 if (matchedTeam) teamId = matchedTeam.id;
 
+                const pName = `${p.metadata?.first_name || ""} ${p.metadata?.last_name || "Sleeper Player"}`.trim();
+                const pPos = p.metadata?.position?.toUpperCase() || "RB";
+
+                // Reconcile Sleeper ID with mock-player-X / local rankings ID
+                const matchedPlayer = (matchedLeague.players || []).find((pl: any) => {
+                  const plName = pl.name || "";
+                  const plPos = pl.position || "";
+                  return cleanPlayerName(plName) === cleanPlayerName(pName) && plPos.toUpperCase() === pPos;
+                });
+
+                const finalPlayerId = matchedPlayer ? matchedPlayer.id : p.playerId;
+
                 return {
                   pickNumber: p.pickNumber,
                   roundNumber: p.roundNumber,
                   teamId,
-                  playerId: p.playerId,
+                  playerId: finalPlayerId,
                   player: {
-                    id: p.playerId,
-                    name: `${p.metadata?.first_name || ""} ${p.metadata?.last_name || "Sleeper Player"}`.trim(),
-                    position: p.metadata?.position || "RB",
+                    id: finalPlayerId,
+                    name: pName,
+                    position: pPos,
                     nflTeam: p.metadata?.team || "FA",
                     byeWeek: 0,
                   }

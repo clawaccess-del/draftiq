@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Trophy, Play, CheckCircle2, Trash2, ArrowRight, Sparkles } from "lucide-react";
+import { getDefaultOfflinePlayers } from "@/lib/integrations/default-players";
 
 interface Draft {
   id: string;
@@ -30,6 +31,85 @@ interface ActiveLeaguesListProps {
 
 export default function ActiveLeaguesList({ initialLeagues, dbConnected }: ActiveLeaguesListProps) {
   const [leagues, setLeagues] = useState<League[]>(initialLeagues);
+
+  const handleCreatePracticeDraft = () => {
+    const lId = `practice-league-${Date.now()}`;
+    const dId = `practice-draft-${Date.now()}`;
+
+    const rosterSettings = { QB: 1, RB: 2, WR: 2, TE: 1, FLEX: 1, SUPERFLEX: 0, K: 1, DST: 1, BENCH: 6 };
+    const totalRounds = 15;
+
+    // Create 12 teams, Slot 4 is the user
+    const teams = Array.from({ length: 12 }).map((_, idx) => {
+      const slot = idx + 1;
+      const isUser = slot === 4;
+      return {
+        id: `mock-team-${slot}`,
+        name: isUser ? "My Team (Practice)" : `CPU (Slot ${slot})`,
+        ownerName: isUser ? "User" : "CPU",
+        draftPosition: slot,
+        isUserTeam: isUser,
+        externalTeamId: `mock-team-${slot}`,
+      };
+    });
+
+    // Populate first 3 picks using default players
+    const defaultPlayers = getDefaultOfflinePlayers();
+    const initialPicks = [
+      {
+        pickNumber: 1,
+        roundNumber: 1,
+        teamId: "mock-team-1",
+        playerId: "default-player-1", // Christian McCaffrey
+        player: defaultPlayers[0],
+      },
+      {
+        pickNumber: 2,
+        roundNumber: 1,
+        teamId: "mock-team-2",
+        playerId: "default-player-2", // CeeDee Lamb
+        player: defaultPlayers[1],
+      },
+      {
+        pickNumber: 3,
+        roundNumber: 1,
+        teamId: "mock-team-3",
+        playerId: "default-player-3", // Tyreek Hill
+        player: defaultPlayers[2],
+      },
+    ];
+
+    const newLeague = {
+      id: lId,
+      name: "Practice Sandbox Board",
+      platform: "sleeper",
+      scoringType: "ppr",
+      teamCount: 12,
+      draftType: "snake",
+      rosterSettings,
+      teams,
+      drafts: [
+        {
+          id: dId,
+          status: "active",
+          currentPickNumber: 4,
+          totalRounds,
+          draftType: "snake",
+          picks: initialPicks,
+        },
+      ],
+      players: defaultPlayers,
+      createdAt: new Date().toISOString(),
+    };
+
+    const storedOffline = typeof window !== "undefined" ? localStorage.getItem("offline_leagues") : null;
+    const offlineLeagues = storedOffline ? JSON.parse(storedOffline) : [];
+    offlineLeagues.push(newLeague);
+    localStorage.setItem("offline_leagues", JSON.stringify(offlineLeagues));
+
+    // Redirect to the newly created practice draft
+    window.location.href = `/drafts/${dId}`;
+  };
 
   useEffect(() => {
     // Read offline leagues from localStorage
@@ -81,18 +161,39 @@ export default function ActiveLeaguesList({ initialLeagues, dbConnected }: Activ
           <p className="font-semibold text-slate-400">No leagues found</p>
           <p className="text-xs text-slate-600">Sync a Sleeper league/mock, or create a new league setup.</p>
         </div>
-        <Link
-          href="/leagues/new"
-          className="inline-flex items-center text-xs font-bold text-emerald-400 hover:underline"
-        >
-          Set up a league now →
-        </Link>
+        <div className="flex flex-col sm:flex-row gap-3 justify-center items-center">
+          <Link
+            href="/leagues/new"
+            className="inline-flex items-center justify-center py-2 px-4 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-xl text-xs shadow-md transition-all"
+          >
+            New League Setup
+          </Link>
+          <button
+            onClick={handleCreatePracticeDraft}
+            className="inline-flex items-center justify-center py-2 px-4 bg-slate-900 hover:bg-slate-850 border border-slate-800 text-white font-bold rounded-xl text-xs shadow-md transition-all cursor-pointer animate-pulse"
+          >
+            <Sparkles className="h-3.5 w-3.5 mr-1.5 text-emerald-400 fill-current" />
+            Instant Practice Draft
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <h4 className="text-xs font-extrabold text-slate-500 uppercase tracking-wider">Your Drafts</h4>
+        <button
+          onClick={handleCreatePracticeDraft}
+          className="inline-flex items-center gap-1.5 py-1.5 px-3 bg-emerald-500/10 hover:bg-emerald-500 text-emerald-400 hover:text-slate-950 border border-emerald-500/20 hover:border-emerald-500 rounded-lg text-2xs font-bold transition-all cursor-pointer"
+        >
+          <Sparkles className="h-3 w-3 fill-current text-emerald-400 group-hover:text-slate-950" />
+          Quick Practice Draft
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
       {leagues.map((league) => {
         const activeDraft = league.drafts?.find((d: any) => d.status === "active" || d.status === "paused");
         const completedDraft = league.drafts?.find((d: any) => d.status === "completed");
@@ -212,6 +313,7 @@ export default function ActiveLeaguesList({ initialLeagues, dbConnected }: Activ
           </div>
         );
       })}
+      </div>
     </div>
   );
 }

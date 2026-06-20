@@ -132,7 +132,11 @@ export default function DraftRoomPage({ params }: PageProps) {
         
         const uPos = data.teams.find((t: any) => t.isUserTeam)?.draftPosition || 1;
         setUserPosition(uPos);
-        setTeams(data.teams);
+        const updatedTeams = data.teams.map((t: any) => ({
+          ...t,
+          isUserTeam: t.draftPosition === uPos,
+        }));
+        setTeams(updatedTeams);
         setPicks(data.picks);
         
         const draftedIds = new Set((data.picks || []).map((p: any) => p.playerId));
@@ -203,7 +207,11 @@ export default function DraftRoomPage({ params }: PageProps) {
     
     const uPos = matchedLeague.teams.find((t: any) => t.isUserTeam)?.draftPosition || 1;
     setUserPosition(uPos);
-    setTeams(matchedLeague.teams);
+    const updatedTeams = matchedLeague.teams.map((t: any) => ({
+      ...t,
+      isUserTeam: t.draftPosition === uPos,
+    }));
+    setTeams(updatedTeams);
     setPicks(draft.picks || []);
     
     // Available players are players from rankings who are not in the picks list
@@ -316,9 +324,11 @@ export default function DraftRoomPage({ params }: PageProps) {
         setCurrentPick(data.draft.currentPickNumber);
         setDraftStatus(data.draft.status);
         
-        const uPos = data.teams.find((t: any) => t.isUserTeam)?.draftPosition || 1;
-        setUserPosition(uPos);
-        setTeams(data.teams);
+        const updatedTeams = data.teams.map((t: any) => ({
+          ...t,
+          isUserTeam: t.draftPosition === userPosition,
+        }));
+        setTeams(updatedTeams);
         setPicks(data.picks);
         
         const draftedIds = new Set((data.picks || []).map((p: any) => p.playerId));
@@ -454,9 +464,9 @@ export default function DraftRoomPage({ params }: PageProps) {
           };
         });
 
-      const isThisUserTeam = hasUser 
-        ? team.isUserTeam 
-        : (userPosition ? team.draftPosition === userPosition : idx === 0);
+      const isThisUserTeam = userPosition 
+        ? team.draftPosition === userPosition 
+        : team.isUserTeam;
 
       return {
         teamId: team.id,
